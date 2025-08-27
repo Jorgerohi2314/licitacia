@@ -1,0 +1,261 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String          @id @default(cuid())
+  email          String          @unique
+  name           String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  subscription   Subscription?   // un usuario puede tener 0 o 1 suscripción
+  notifications  Notification[]
+  searchHistory  SearchHistory[]
+
+  @@map("users")
+}
+
+model Subscription {
+  id             String           @id @default(cuid())
+  userId         String           @unique   // <-- necesario para 1:1
+  plan           Plan             @default(FREE)
+  status         Status           @default(ACTIVE)
+  keywords       String           // JSON array of keywords
+  notifications  String           // JSON object with notification preferences
+  preferences    String           // JSON object with user preferences
+  dailyLimit     Int              @default(5)
+  currentUsage   Int              @default(0)
+  nextBillingDate DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paymentHistory PaymentHistory[] @relation("SubscriptionPaymentHistory")
+
+  @@map("subscriptions")
+}
+
+model Tender {
+  id          String   @id @default(cuid())
+  title       String
+  organization String
+  budget      Float?
+  deadline    DateTime
+  category    String
+  description String
+  summary     String?
+  keywords    String   // JSON array of keywords
+  requirements String? // JSON array of requirements
+  source      String
+  sourceUrl   String?
+  publishedAt DateTime
+  scrapedAt   DateTime @default(now())
+  status      TenderStatus @default(NEW)
+  relevanceScore Int @default(0)
+  complexity  Complexity @default(MEDIUM)
+  riskLevel   RiskLevel @default(MEDIUM)
+
+  analysis     TenderAnalysis[]
+  notifications Notification[]
+  searchHistory SearchHistory[]
+  
+  @@map("tenders")
+}
+
+model TenderAnalysis {
+  id         String   @id @default(cuid())
+  tenderId   String
+  userId     String?
+  analysis   String   // JSON object with analysis results
+  score      Int
+  category   String
+  summary    String
+  keywords   String   // JSON array of keywords
+  requirements String // JSON array of requirements
+  recommendations String // JSON array of recommendations
+  riskLevel  RiskLevel
+  complexity Complexity
+  createdAt  DateTime @default(now())
+
+  tender Tender @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  
+  @@map("tender_analyses")
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  tenderId  String?
+  type      NotificationType
+  recipient String
+  subject   String?
+  message   String
+  status    NotificationStatus @default(PENDING)
+  messageId String?
+  error     String?
+  metadata  String?          // JSON object with additional data
+  createdAt DateTime         @default(now())
+  sentAt    DateTime?
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tender Tender? @relation(fields: [tenderId], references: [id], onDelete: SetNull)
+  
+  @@map("notifications")
+}
+
+model SearchHistory {
+  id        String   @id @default(cuid())
+  userId    String
+  tenderId  String
+  query     String
+  filters   String?  // JSON object with search filters
+  results   Int      @default(0)
+  createdAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tender Tender @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  
+  @@map("search_history")
+}
+
+model PaymentHistory {
+  id             String        @id @default(cuid())
+  subscriptionId String
+  amount         Float
+  currency       String        @default("EUR")
+  paymentMethod  PaymentMethod
+  transactionId  String?
+  status         PaymentStatus @default(PENDING)
+  metadata       String?       // JSON object with payment details
+  createdAt      DateTime      @default(now())
+  processedAt    DateTime?
+
+  subscription   Subscription  @relation("SubscriptionPaymentHistory", fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@map("payment_history")
+}
+
+model ScrapingSource {
+  id          String   @id @default(cuid())
+  name        String
+  url         String
+  type        ScrapingType
+  region      String?
+  active      Boolean  @default(true)
+  config      String?  // JSON object with scraping configuration
+  lastScraped DateTime?
+  totalTenders Int     @default(0)
+  errorCount  Int      @default(0)
+  lastError   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("scraping_sources")
+}
+
+model SystemMetrics {
+  id            String   @id @default(cuid())
+  metricName    String
+  metricValue   Float
+  metadata      String?  // JSON object with additional metric data
+  timestamp     DateTime @default(now())
+
+  @@map("system_metrics")
+}
+
+model ErrorLog {
+  id        String   @id @default(cuid())
+  level     LogLevel @default(ERROR)
+  message   String
+  stack     String?
+  context   String?  // JSON object with error context
+  component String?
+  userId    String?
+  createdAt DateTime @default(now())
+
+  @@map("error_logs")
+}
+
+// Enums
+enum Plan {
+  FREE
+  PREMIUM
+  ENTERPRISE
+}
+
+enum Status {
+  ACTIVE
+  CANCELLED
+  EXPIRED
+  SUSPENDED
+}
+
+enum TenderStatus {
+  NEW
+  PROCESSED
+  SENT
+  ARCHIVED
+}
+
+enum Complexity {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum NotificationType {
+  EMAIL
+  TELEGRAM
+  WHATSAPP
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  RETRYING
+}
+
+enum PaymentMethod {
+  STRIPE
+  PAYPAL
+  BANK_TRANSFER
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum ScrapingType {
+  BOE
+  DOUE
+  REGIONAL
+  PLATFORM
+}
+
+enum LogLevel {
+  DEBUG
+  INFO
+  WARN
+  ERROR
+  FATAL
+}
+
