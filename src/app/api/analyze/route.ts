@@ -1,5 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server';
-import ZAI from 'z-ai-web-dev-sdk';
+import { NextRequest, NextResponse } from "next/server";
+import Groq from "groq-sdk";
 
 interface AnalysisRequest {
   tender: {
@@ -24,8 +24,24 @@ interface AnalysisResult {
   keywords: string[];
   requirements: string[];
   recommendations: string[];
-  riskLevel: 'low' | 'medium' | 'high';
-  estimatedComplexity: 'low' | 'medium' | 'high';
+  riskLevel: "low" | "medium" | "high";
+  estimatedComplexity: "low" | "medium" | "high";
+}
+
+function extractJsonFromResponse(content: string): string {
+  // Buscar JSON entre bloques de código
+  const codeBlockMatch = content.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+  if (codeBlockMatch) {
+    return codeBlockMatch[1];
+  }
+  
+  // Buscar JSON directo
+  const jsonMatch = content.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    return jsonMatch[0];
+  }
+  
+  return content;
 }
 
 export async function POST(request: NextRequest) {
@@ -33,101 +49,120 @@ export async function POST(request: NextRequest) {
     const body: AnalysisRequest = await request.json();
     const { tender, userKeywords, userPreferences } = body;
 
-    // Inicializar ZAI para análisis con IA
-    const zai = await ZAI.create();
+    // Validar que tenemos la API key
+    if (!process.env.GROQ_API_KEY) {
+      throw new Error("GROQ_API_KEY no está configurada");
+    }
 
-    // Crear prompt para análisis de licitación
+    // Crear cliente de Groq
+    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
+    // Crear prompt mejorado para análisis
     const analysisPrompt = `
-    Analiza la siguiente licitación pública y proporciona un análisis detallado:
+      Analiza la siguiente licitación y devuelve ÚNICAMENTE un JSON válido sin texto adicional:
 
-    Título: ${tender.title}
-    Descripción: ${tender.description}
-    Organización: ${tender.organization}
-    Presupuesto: €${tender.budget.toLocaleString()}
-    Fecha límite: ${tender.deadline}
+      Título: ${tender.title}
+      Descripción: ${tender.description}
+      Organización: ${tender.organization}
+      Presupuesto: ${tender.budget}
+      Plazo: ${tender.deadline}
+      
+      Palabras clave del usuario: ${userKeywords.join(", ")}
+      Preferencias: 
+      - Categorías: ${userPreferences.categories.join(", ")}
+      - Presupuesto mínimo: ${userPreferences.minBudget}
+      - Regiones: ${userPreferences.regions.join(", ")}
 
-    Palabras clave del usuario: ${userKeywords.join(', ')}
-    Categorías de interés: ${userPreferences.categories.join(', ')}
-    Presupuesto mínimo: €${userPreferences.minBudget.toLocaleString()}
-
-    Proporciona el análisis en formato JSON con las siguientes claves:
-    - relevanceScore: puntuación de relevancia del 0 al 100
-    - category: categoría principal de la licitación
-    - summary: resumen conciso de 2-3 frases
-    - keywords: array de palabras clave relevantes
-    - requirements: array de requisitos principales
-    - recommendations: array de recomendaciones para participar
-    - riskLevel: "low", "medium" o "high"
-    - estimatedComplexity: "low", "medium" o "high"
+      Devuelve SOLO este JSON (sin markdown, sin explicaciones):
+      {
+        "relevanceScore": [número entre 0 y 100],
+        "category": "[categoría principal]",
+        "summary": "[resumen breve]",
+        "keywords": ["palabra1", "palabra2", "palabra3"],
+        "requirements": ["requisito1", "requisito2"],
+        "recommendations": ["recomendación1", "recomendación2"],
+        "riskLevel": "[low/medium/high]",
+        "estimatedComplexity": "[low/medium/high]"
+      }
     `;
 
-    // Realizar análisis con IA
-    const completion = await zai.chat.completions.create({
-      messages: [
-        {
-          role: 'system',
-          content: 'Eres un experto en licitaciones públicas y contratación administrativa. Analiza las oportunidades de negocio y proporciona insights detallados en formato JSON.'
-        },
-        {
-          role: 'user',
-          content: analysisPrompt
-        }
-      ],
-      temperature: 0.3,
-      max_tokens: 1000
+    // Llamada a la API de Groq
+    const response = await groq.chat.completions.create({
+      model: "deepseek-r1-distill-llama-70b",
+      messages: [{ role: "user", content: analysisPrompt }],
+      temperature: 0.1, // Reducir temperatura para respuestas más consistentes
+      max_tokens: 1000,
     });
 
-    // Extraer y parsear la respuesta JSON
-    const analysisText = completion.choices[0]?.message?.content || '{}';
-    let analysisResult: AnalysisResult;
+    console.log("Respuesta completa de Groq:", JSON.stringify(response, null, 2));
 
+    // Extraer respuesta
+    const aiResponse = response.choices[0]?.message?.content;
+    
+    if (!aiResponse) {
+      throw new Error("No se recibió respuesta de Groq");
+    }
+
+    console.log("Contenido de la respuesta:", aiResponse);
+
+    // Extraer JSON de la respuesta
+    const jsonString = extractJsonFromResponse(aiResponse.trim());
+    console.log("JSON extraído:", jsonString);
+
+    let analysis: AnalysisResult;
     try {
-      // Limpiar el texto para extraer JSON
-      const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        analysisResult = JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error('No se encontró JSON en la respuesta');
-      }
+      analysis = JSON.parse(jsonString);
     } catch (parseError) {
-      console.error('Error parsing AI response:', parseError);
-      // Valores por defecto si falla el parseo
-      analysisResult = {
-        relevanceScore: 50,
-        category: 'General',
-        summary: 'Licitación pública que requiere análisis adicional.',
-        keywords: ['licitación', 'contrato'],
-        requirements: ['Requisitos estándar'],
-        recommendations: ['Analizar detenidamente los requisitos'],
-        riskLevel: 'medium',
-        estimatedComplexity: 'medium'
+      console.error("Error al parsear JSON:", parseError);
+      console.error("String que falló:", jsonString);
+      
+      // Fallback: crear respuesta por defecto
+      analysis = {
+        relevanceScore: 0,
+        category: "Sin categorizar",
+        summary: "No se pudo analizar la licitación",
+        keywords: [],
+        requirements: ["Error en el análisis"],
+        recommendations: ["Revisar manualmente"],
+        riskLevel: "high",
+        estimatedComplexity: "high"
       };
     }
 
-    // Calcular puntuación de relevancia adicional basada en preferencias del usuario
-    const keywordMatches = userKeywords.filter(keyword =>
-      tender.title.toLowerCase().includes(keyword.toLowerCase()) ||
-      tender.description.toLowerCase().includes(keyword.toLowerCase())
-    ).length;
+    // Validar que el análisis tiene la estructura correcta
+    const isValidAnalysis = (obj: any): obj is AnalysisResult => {
+      return (
+        typeof obj === 'object' &&
+        typeof obj.relevanceScore === 'number' &&
+        typeof obj.category === 'string' &&
+        typeof obj.summary === 'string' &&
+        Array.isArray(obj.keywords) &&
+        Array.isArray(obj.requirements) &&
+        Array.isArray(obj.recommendations) &&
+        ['low', 'medium', 'high'].includes(obj.riskLevel) &&
+        ['low', 'medium', 'high'].includes(obj.estimatedComplexity)
+      );
+    };
 
-    const categoryMatch = userPreferences.categories.includes(analysisResult.category);
-    const budgetMatch = tender.budget >= userPreferences.minBudget;
+    if (!isValidAnalysis(analysis)) {
+      console.error("Estructura de análisis inválida:", analysis);
+      throw new Error("La respuesta de Groq no tiene la estructura esperada");
+    }
 
-    // Ajustar puntuación de relevancia
-    let finalRelevanceScore = analysisResult.relevanceScore;
-    if (keywordMatches > 0) finalRelevanceScore += keywordMatches * 10;
-    if (categoryMatch) finalRelevanceScore += 15;
-    if (budgetMatch) finalRelevanceScore += 10;
+    return NextResponse.json({ success: true, analysis });
 
-    finalRelevanceScore = Math.min(100, Math.max(0, finalRelevanceScore));
-
-    analysisResult.relevanceScore = Math.round(finalRelevanceScore);
-
-    return NextResponse.json(analysisResult);
-  } catch (error) {
-    console.error('Error analyzing tender:', error);
+  } catch (error: any) {
+    console.error("Error en /api/analyze:", error);
+    
+    // Respuesta de error más detallada
+    const errorMessage = error instanceof Error ? error.message : "Error interno del servidor";
+    
     return NextResponse.json(
-      { error: 'Error analyzing tender' },
+      { 
+        success: false, 
+        error: errorMessage,
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      },
       { status: 500 }
     );
   }
