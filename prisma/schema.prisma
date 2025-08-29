@@ -145,19 +145,17 @@ model PaymentHistory {
 }
 
 model ScrapingSource {
-  id          String   @id @default(cuid())
-  name        String
-  url         String
-  type        ScrapingType
-  region      String?
-  active      Boolean  @default(true)
-  config      String?  // JSON object with scraping configuration
-  lastScraped DateTime?
-  totalTenders Int     @default(0)
-  errorCount  Int      @default(0)
-  lastError   String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            String   @id
+  name          String
+  url           String
+  type          String   // 'boe', 'doue', 'regional', 'platform'
+  region        String?
+  active        Boolean  @default(true)
+  lastScraped   DateTime?
+  totalTenders  Int      @default(0)
+  config        String?  // JSON stringified configuration
+  updatedAt     DateTime @updatedAt
+  createdAt     DateTime @default(now())
 
   @@map("scraping_sources")
 }

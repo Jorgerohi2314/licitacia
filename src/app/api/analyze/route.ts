@@ -46,8 +46,34 @@ function extractJsonFromResponse(content: string): string {
 
 export async function POST(request: NextRequest) {
   try {
-    const body: AnalysisRequest = await request.json();
+    let body: AnalysisRequest;
+    try {
+      body = await request.json();
+    } catch (parseError) {
+      console.error("Error al parsear el cuerpo de la solicitud:", parseError);
+      return NextResponse.json(
+        { success: false, error: "Cuerpo de solicitud inválido" },
+        { status: 400 }
+      );
+    }
+
+    // Validar que el cuerpo tenga estructura correcta
+    if (!body || !body.tender) {
+      return NextResponse.json(
+        { success: false, error: "Datos de licitación faltantes" },
+        { status: 400 }
+      );
+    }
+
     const { tender, userKeywords, userPreferences } = body;
+
+    if (!tender.title) {
+      console.error("Falta el título de la licitación:", tender);
+      return NextResponse.json(
+        { success: false, error: "El título de la licitación es obligatorio" },
+        { status: 400 }
+      );
+    }
 
     // Validar que tenemos la API key
     if (!process.env.GROQ_API_KEY) {

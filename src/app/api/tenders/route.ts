@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
     const where: any = {};
 
     if (category) {
-      where.category = { equals: category, mode: 'insensitive' };
+      where.category = { contains: category }; // Modificado
     }
     if (minBudget) {
       const budgetNum = Number(minBudget);
@@ -26,18 +26,17 @@ export async function GET(request: NextRequest) {
     const orClauses: any[] = [];
     if (q) {
       orClauses.push(
-        { title: { contains: q, mode: 'insensitive' } },
-        { summary: { contains: q, mode: 'insensitive' } },
-        { description: { contains: q, mode: 'insensitive' } }
+        { title: { contains: q } }, // Removido mode
+        { summary: { contains: q } },
+        { description: { contains: q } }
       );
     }
     if (keywords.length > 0) {
       for (const kw of keywords) {
-        // keywords está almacenado como JSON string, usamos contains simple
         orClauses.push(
           { keywords: { contains: kw } },
-          { title: { contains: kw, mode: 'insensitive' } },
-          { summary: { contains: kw, mode: 'insensitive' } }
+          { title: { contains: kw } }, // Removido mode
+          { summary: { contains: kw } } // Removido mode
         );
       }
     }
