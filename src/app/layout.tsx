@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "next-themes";
 import { ThemeToggle } from "@/components/themeToggle";
 import { Providers } from "./providers";
+import { SessionProviderWrapper } from "@/components/providers/session-provider";
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -52,9 +53,11 @@ export default function RootLayout({
           {/* Puedes colocar el botón en un header, navbar o sidebar */}
           <header className="p-4 flex justify-end">
             <ThemeToggle />
+            <SessionProviderWrapper>
+              {children}
+            <Toaster />
+            </SessionProviderWrapper>
           </header>
-          
-          {children}
         </Providers>
       </body>
     </html>
