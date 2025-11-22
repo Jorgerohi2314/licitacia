@@ -29,19 +29,26 @@ interface AnalysisResult {
 }
 
 function extractJsonFromResponse(content: string): string {
-  // Buscar JSON entre bloques de código
+  // 1. Intentar encontrar bloque de código JSON
   const codeBlockMatch = content.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
   if (codeBlockMatch) {
     return codeBlockMatch[1];
   }
-  
-  // Buscar JSON directo
-  const jsonMatch = content.match(/\{[\s\S]*\}/);
-  if (jsonMatch) {
-    return jsonMatch[0];
+
+  // 2. Intentar encontrar el primer '{' y el último '}'
+  const firstBrace = content.indexOf('{');
+  const lastBrace = content.lastIndexOf('}');
+
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    return content.substring(firstBrace, lastBrace + 1);
   }
-  
+
   return content;
+}
+
+function sanitizeJsonString(jsonString: string): string {
+  // Eliminar caracteres de control que pueden romper JSON.parse
+  return jsonString.replace(/[\u0000-\u001F]+/g, " ");
 }
 
 export async function POST(request: NextRequest) {
@@ -57,7 +64,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validar que el cuerpo tenga estructura correcta
     if (!body || !body.tender) {
       return NextResponse.json(
         { success: false, error: "Datos de licitación faltantes" },
@@ -68,126 +74,114 @@ export async function POST(request: NextRequest) {
     const { tender, userKeywords, userPreferences } = body;
 
     if (!tender.title) {
-      console.error("Falta el título de la licitación:", tender);
       return NextResponse.json(
         { success: false, error: "El título de la licitación es obligatorio" },
         { status: 400 }
       );
     }
 
-    // Validar que tenemos la API key
     if (!process.env.GROQ_API_KEY) {
       throw new Error("GROQ_API_KEY no está configurada");
     }
 
-    // Crear cliente de Groq
     const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-    // Crear prompt mejorado para análisis
     const analysisPrompt = `
-      Analiza la siguiente licitación y devuelve ÚNICAMENTE un JSON válido sin texto adicional:
-
+      Eres un experto analista de licitaciones públicas. Tu tarea es analizar la siguiente licitación y extraer información estructurada.
+      
+      DATOS DE LA LICITACIÓN:
       Título: ${tender.title}
       Descripción: ${tender.description}
       Organización: ${tender.organization}
       Presupuesto: ${tender.budget}
       Plazo: ${tender.deadline}
       
-      Palabras clave del usuario: ${userKeywords.join(", ")}
-      Preferencias: 
-      - Categorías: ${userPreferences.categories.join(", ")}
-      - Presupuesto mínimo: ${userPreferences.minBudget}
-      - Regiones: ${userPreferences.regions.join(", ")}
+      PERFIL DEL USUARIO:
+      Palabras clave de interés: ${userKeywords.join(", ")}
+      Categorías preferidas: ${userPreferences.categories.join(", ")}
+      Presupuesto mínimo deseado: ${userPreferences.minBudget}
+      Regiones de interés: ${userPreferences.regions.join(", ")}
 
-      Devuelve SOLO este JSON (sin markdown, sin explicaciones):
+      INSTRUCCIONES:
+      1. Analiza la relevancia basándote en el perfil del usuario.
+      2. Extrae palabras clave y requisitos técnicos.
+      3. Evalúa el riesgo y la complejidad.
+      4. Genera un resumen ejecutivo.
+
+      FORMATO DE RESPUESTA:
+      Devuelve ÚNICAMENTE un objeto JSON válido. NO incluyas texto antes ni después del JSON. NO uses markdown.
+      
+      El JSON debe tener EXACTAMENTE esta estructura:
       {
-        "relevanceScore": [número entre 0 y 100],
-        "category": "[categoría principal]",
-        "summary": "[resumen breve]",
-        "keywords": ["palabra1", "palabra2", "palabra3"],
-        "requirements": ["requisito1", "requisito2"],
-        "recommendations": ["recomendación1", "recomendación2"],
-        "riskLevel": "[low/medium/high]",
-        "estimatedComplexity": "[low/medium/high]"
+        "relevanceScore": (número entero 0-100),
+        "category": "(categoría principal inferida)",
+        "summary": "(resumen ejecutivo de 2-3 frases)",
+        "keywords": ["palabra1", "palabra2", ...],
+        "requirements": ["requisito1", "requisito2", ...],
+        "recommendations": ["recomendación1", "recomendación2", ...],
+        "riskLevel": "low" | "medium" | "high",
+        "estimatedComplexity": "low" | "medium" | "high"
       }
     `;
 
-    // Llamada a la API de Groq
     const response = await groq.chat.completions.create({
-      model: "deepseek-r1-distill-llama-70b",
-      messages: [{ role: "user", content: analysisPrompt }],
-      temperature: 0.1, // Reducir temperatura para respuestas más consistentes
-      max_tokens: 1000,
+      model: "deepseek-r1-distill-llama-70b", // Modelo potente y rápido
+      messages: [
+        {
+          role: "system",
+          content: "Eres una API que solo responde con JSON válido. No incluyas explicaciones ni markdown."
+        },
+        { role: "user", content: analysisPrompt }
+      ],
+      temperature: 0.1,
+      max_tokens: 1500,
+      response_format: { type: "json_object" } // Forzar modo JSON si el modelo lo soporta
     });
 
-    console.log("Respuesta completa de Groq:", JSON.stringify(response, null, 2));
-
-    // Extraer respuesta
     const aiResponse = response.choices[0]?.message?.content;
-    
+
     if (!aiResponse) {
       throw new Error("No se recibió respuesta de Groq");
     }
 
-    console.log("Contenido de la respuesta:", aiResponse);
-
-    // Extraer JSON de la respuesta
-    const jsonString = extractJsonFromResponse(aiResponse.trim());
-    console.log("JSON extraído:", jsonString);
+    // Limpieza y extracción robusta
+    const jsonString = sanitizeJsonString(extractJsonFromResponse(aiResponse.trim()));
 
     let analysis: AnalysisResult;
     try {
       analysis = JSON.parse(jsonString);
     } catch (parseError) {
-      console.error("Error al parsear JSON:", parseError);
-      console.error("String que falló:", jsonString);
-      
-      // Fallback: crear respuesta por defecto
+      console.error("Error al parsear JSON de IA:", parseError);
+      console.error("String recibido:", jsonString);
+
+      // Intento de recuperación simple o fallback
       analysis = {
         relevanceScore: 0,
-        category: "Sin categorizar",
-        summary: "No se pudo analizar la licitación",
+        category: "Error de Análisis",
+        summary: "La IA no pudo generar un análisis estructurado válido. Por favor revise la licitación manualmente.",
         keywords: [],
-        requirements: ["Error en el análisis"],
-        recommendations: ["Revisar manualmente"],
-        riskLevel: "high",
-        estimatedComplexity: "high"
+        requirements: [],
+        recommendations: ["Revisión manual requerida"],
+        riskLevel: "medium",
+        estimatedComplexity: "medium"
       };
     }
 
-    // Validar que el análisis tiene la estructura correcta
-    const isValidAnalysis = (obj: any): obj is AnalysisResult => {
-      return (
-        typeof obj === 'object' &&
-        typeof obj.relevanceScore === 'number' &&
-        typeof obj.category === 'string' &&
-        typeof obj.summary === 'string' &&
-        Array.isArray(obj.keywords) &&
-        Array.isArray(obj.requirements) &&
-        Array.isArray(obj.recommendations) &&
-        ['low', 'medium', 'high'].includes(obj.riskLevel) &&
-        ['low', 'medium', 'high'].includes(obj.estimatedComplexity)
-      );
-    };
-
-    if (!isValidAnalysis(analysis)) {
-      console.error("Estructura de análisis inválida:", analysis);
-      throw new Error("La respuesta de Groq no tiene la estructura esperada");
-    }
+    // Normalización de valores (asegurar que enums sean correctos)
+    const validLevels = ["low", "medium", "high"];
+    if (!validLevels.includes(analysis.riskLevel?.toLowerCase())) analysis.riskLevel = "medium";
+    if (!validLevels.includes(analysis.estimatedComplexity?.toLowerCase())) analysis.estimatedComplexity = "medium";
+    analysis.riskLevel = analysis.riskLevel.toLowerCase() as any;
+    analysis.estimatedComplexity = analysis.estimatedComplexity.toLowerCase() as any;
 
     return NextResponse.json({ success: true, analysis });
 
   } catch (error: any) {
     console.error("Error en /api/analyze:", error);
-    
-    // Respuesta de error más detallada
-    const errorMessage = error instanceof Error ? error.message : "Error interno del servidor";
-    
     return NextResponse.json(
-      { 
-        success: false, 
-        error: errorMessage,
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      {
+        success: false,
+        error: error.message || "Error interno del servidor",
       },
       { status: 500 }
     );
