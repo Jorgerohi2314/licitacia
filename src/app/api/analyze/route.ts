@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Groq from "groq-sdk";
+import { z } from "zod";
 
 interface AnalysisRequest {
   tender: {
@@ -17,16 +18,19 @@ interface AnalysisRequest {
   };
 }
 
-interface AnalysisResult {
-  relevanceScore: number;
-  category: string;
-  summary: string;
-  keywords: string[];
-  requirements: string[];
-  recommendations: string[];
-  riskLevel: "low" | "medium" | "high";
-  estimatedComplexity: "low" | "medium" | "high";
-}
+// Schema para validar la respuesta de la IA
+const AnalysisResultSchema = z.object({
+  relevanceScore: z.number().min(0).max(100),
+  category: z.string(),
+  summary: z.string(),
+  keywords: z.array(z.string()),
+  requirements: z.array(z.string()),
+  recommendations: z.array(z.string()),
+  riskLevel: z.enum(["low", "medium", "high"]),
+  estimatedComplexity: z.enum(["low", "medium", "high"]),
+});
+
+type AnalysisResult = z.infer<typeof AnalysisResultSchema>;
 
 function extractJsonFromResponse(content: string): string {
   // 1. Intentar encontrar bloque de código JSON
@@ -48,7 +52,10 @@ function extractJsonFromResponse(content: string): string {
 
 function sanitizeJsonString(jsonString: string): string {
   // Eliminar caracteres de control que pueden romper JSON.parse
-  return jsonString.replace(/[\u0000-\u001F]+/g, " ");
+  // También intentar arreglar comas trailing si es posible (aunque JSON.parse es estricto)
+  return jsonString
+    .replace(/[\u0000-\u001F]+/g, " ")
+    .replace(/,\s*}/g, "}"); // Simple fix para trailing commas
 }
 
 export async function POST(request: NextRequest) {
@@ -149,12 +156,23 @@ export async function POST(request: NextRequest) {
 
     let analysis: AnalysisResult;
     try {
-      analysis = JSON.parse(jsonString);
+      const parsed = JSON.parse(jsonString);
+      // Validar con Zod
+      const validation = AnalysisResultSchema.safeParse(parsed);
+
+      if (validation.success) {
+        analysis = validation.data;
+      } else {
+        console.error("Error de validación de esquema:", validation.error);
+        // Intentar recuperar datos parciales o usar defaults para campos fallidos
+        // Por ahora, lanzamos error para caer en el catch y devolver el fallback
+        throw new Error("Respuesta de IA no cumple con el esquema");
+      }
     } catch (parseError) {
-      console.error("Error al parsear JSON de IA:", parseError);
+      console.error("Error al parsear/validar JSON de IA:", parseError);
       console.error("String recibido:", jsonString);
 
-      // Intento de recuperación simple o fallback
+      // Fallback seguro
       analysis = {
         relevanceScore: 0,
         category: "Error de Análisis",
@@ -166,13 +184,6 @@ export async function POST(request: NextRequest) {
         estimatedComplexity: "medium"
       };
     }
-
-    // Normalización de valores (asegurar que enums sean correctos)
-    const validLevels = ["low", "medium", "high"];
-    if (!validLevels.includes(analysis.riskLevel?.toLowerCase())) analysis.riskLevel = "medium";
-    if (!validLevels.includes(analysis.estimatedComplexity?.toLowerCase())) analysis.estimatedComplexity = "medium";
-    analysis.riskLevel = analysis.riskLevel.toLowerCase() as any;
-    analysis.estimatedComplexity = analysis.estimatedComplexity.toLowerCase() as any;
 
     return NextResponse.json({ success: true, analysis });
 

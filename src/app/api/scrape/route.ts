@@ -1,4 +1,3 @@
-```typescript
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { z } from 'zod';
@@ -15,6 +14,20 @@ interface ScrapingSourceConfig {
   active: boolean;
   lastScraped?: Date | null;
   totalTenders: number;
+}
+
+export interface TenderInput {
+  title: string;
+  organization: string;
+  budget: number | null;
+  deadline: string; // ISO string
+  category: string;
+  description: string;
+  source: string;
+  sourceUrl: string;
+  publishedAt: string; // ISO string
+  keywords: string[];
+  summary?: string;
 }
 
 // Configuración inicial para seeding
@@ -71,7 +84,7 @@ const ScrapeBody = z.object({
 // Helper para obtener fuentes (con auto-seeding)
 async function getScrapingSources() {
   let sources = await db.scrapingSource.findMany();
-  
+
   if (sources.length === 0) {
     console.log('Seeding initial scraping sources...');
     await db.scrapingSource.createMany({
@@ -82,12 +95,12 @@ async function getScrapingSources() {
     });
     sources = await db.scrapingSource.findMany();
   }
-  
+
   return sources;
 }
 
 // Función para procesar y guardar tenders en lote
-async function processAndSaveTenders(tenders: any[], sourceId: string) {
+export async function processAndSaveTenders(tenders: TenderInput[], sourceId: string) {
   if (tenders.length === 0) return { new: 0, updated: 0, errors: [] };
 
   const errors: string[] = [];
@@ -97,7 +110,7 @@ async function processAndSaveTenders(tenders: any[], sourceId: string) {
   try {
     // 1. Obtener URLs de los tenders encontrados para verificar existencia
     const sourceUrls = tenders.map(t => t.sourceUrl).filter(Boolean);
-    
+
     // 2. Buscar tenders existentes en una sola consulta
     const existingTenders = await db.tender.findMany({
       where: {
@@ -160,14 +173,20 @@ async function processAndSaveTenders(tenders: any[], sourceId: string) {
       newTendersCount = tendersToCreate.length;
     }
 
-    // 5. Ejecutar actualizaciones (individuales, Prisma no tiene updateMany con data diferente)
-    // Podríamos usar Promise.all pero limitando la concurrencia si son muchos
-    for (const update of tendersToUpdate) {
-      await db.tender.update({
-        where: { id: update.id },
-        data: update.data
-      });
-      updatedTendersCount++;
+    // 5. Ejecutar actualizaciones en paralelo con límite de concurrencia
+    const BATCH_SIZE = 10;
+    for (let i = 0; i < tendersToUpdate.length; i += BATCH_SIZE) {
+      const batch = tendersToUpdate.slice(i, i + BATCH_SIZE);
+      await Promise.all(batch.map(update =>
+        db.tender.update({
+          where: { id: update.id },
+          data: update.data
+        }).catch(err => {
+          console.error(`Error updating tender ${update.id}:`, err);
+          errors.push(`Update error for ${update.id}: ${err.message}`);
+        })
+      ));
+      updatedTendersCount += batch.length;
     }
 
   } catch (error: any) {
@@ -201,7 +220,7 @@ async function scrapeBOE() {
 
     const html = await response.text();
     const $ = cheerio.load(html);
-    const tenders: any[] = [];
+    const tenders: TenderInput[] = [];
 
     // Helpers de extracción (reutilizados pero limpiados)
     const extractKeywords = (title: string): string[] => {
@@ -239,15 +258,15 @@ async function scrapeBOE() {
       const $el = $(element);
       const title = $el.text().trim();
       const href = $el.attr('href');
-      
+
       if (!title || !href) return;
-      
+
       const url = new URL(href, boeUrl).toString();
       const titleLower = title.toLowerCase();
 
       const isRelevantLink = (
         (titleLower.match(/licitación|contratación|concurso|adjudicación|contrato|pliego/i) ||
-         url.match(/licitacion|contratacion|concurso|adjudicacion/i)) &&
+          url.match(/licitacion|contratacion|concurso|adjudicacion/i)) &&
         !titleLower.match(/(pdf|boe|pág|página|kb|mb|anuncio|notificación|índice|sumario)/i)
       );
 
@@ -273,7 +292,7 @@ async function scrapeBOE() {
         const $el = $(element);
         const title = $el.find('h3, .titulo, a').first().text().trim();
         const href = $el.find('a').attr('href');
-        
+
         if (title && href && title.length > 30) {
           const url = new URL(href, boeUrl).toString();
           if (title.toLowerCase().match(/licitación|contratación|concurso/i)) {
@@ -295,7 +314,7 @@ async function scrapeBOE() {
     }
 
     console.log(`Found ${tenders.length} tenders from BOE`);
-    
+
     const saveResult = await processAndSaveTenders(tenders, 'boe');
 
     return {
@@ -323,9 +342,9 @@ async function scrapeBOE() {
 }
 
 // Parser XML mejorado usando Cheerio
-function parseAtomFeed(xml: string, sourceId: string): any[] {
+function parseAtomFeed(xml: string, sourceId: string): TenderInput[] {
   const $ = cheerio.load(xml, { xmlMode: true });
-  const items: any[] = [];
+  const items: TenderInput[] = [];
 
   $('entry').each((_, element) => {
     const $el = $(element);
@@ -371,8 +390,8 @@ export async function GET(request: NextRequest) {
         totalSources: sources.length,
         activeSources: sources.filter(s => s.active).length,
         totalTenders: sources.reduce((sum, s) => sum + s.totalTenders, 0),
-        lastScraped: sources.reduce((latest, s) => 
-          s.lastScraped && (!latest || new Date(s.lastScraped) > new Date(latest)) ? s.lastScraped.toISOString() : latest, 
+        lastScraped: sources.reduce((latest, s) =>
+          s.lastScraped && (!latest || new Date(s.lastScraped) > new Date(latest)) ? s.lastScraped.toISOString() : latest,
           ''
         )
       };
@@ -409,7 +428,7 @@ export async function POST(request: NextRequest) {
 
     if (action === 'configure') {
       if (!sourceId) return NextResponse.json({ error: 'sourceId requerido' }, { status: 400 });
-      
+
       const updated = await db.scrapingSource.update({
         where: { id: sourceId },
         data: {
@@ -441,15 +460,18 @@ export async function POST(request: NextRequest) {
       const source = await db.scrapingSource.findUnique({ where: { id: sourceId } });
       if (!source) return NextResponse.json({ error: 'Source not found' }, { status: 404 });
 
-      const endpoints: Record<string, string> = {
+      // Fallback endpoints si la URL de la DB no es específica para el feed
+      const fallbackEndpoints: Record<string, string> = {
         'doue': 'https://ted.europa.eu/TED/misc/atomFeed.do',
         'plataforma-contratacion': 'https://contrataciondelestado.es/sindicacion/sindicacion_643/licitacionesPerfilContratante',
         'cat': 'https://contractaciopublica.gencat.cat/ecofin_ps/Atom/ES/indexAtom.xml',
         'madrid': 'https://www.madrid.org/contratacionpublica/sindicacion/sindicacion.atom'
       };
 
-      const endpoint = endpoints[sourceId] || source.url;
-      console.log(`Fetching from endpoint: ${endpoint}`);
+      // Priorizar la URL de la base de datos, usar fallback si es necesario
+      // Asumimos que si la URL en DB es la genérica de la web, queremos el feed específico si existe
+      const endpoint = fallbackEndpoints[sourceId] || source.url;
+      console.log(`Fetching from endpoint: ${endpoint} (Source: ${source.name})`);
 
       const res = await fetch(endpoint, {
         headers: {
@@ -460,10 +482,10 @@ export async function POST(request: NextRequest) {
       });
 
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-      
+
       const text = await res.text();
       // Detectar si es JSON o XML
-      let items: any[] = [];
+      let items: TenderInput[] = [];
       if (text.trim().startsWith('{') || text.trim().startsWith('[')) {
         try {
           const json = JSON.parse(text);
@@ -502,4 +524,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Internal server error', details: error.message }, { status: 500 });
   }
 }
-```
