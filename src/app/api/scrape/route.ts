@@ -160,6 +160,7 @@ export async function processAndSaveTenders(tenders: TenderInput[], sourceId: st
           requirements: JSON.stringify([]),
           complexity: 'MEDIUM',
           riskLevel: 'MEDIUM'
+    ge
         });
       }
     }
@@ -211,7 +212,7 @@ async function scrapeBOE() {
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; TenderScraper/1.0)'
       },
-      timeout: 15000
+      signal: AbortSignal.timeout(15000)
     });
 
     if (!response.ok) {
@@ -224,7 +225,7 @@ async function scrapeBOE() {
 
     // Helpers de extracción (reutilizados pero limpiados)
     const extractKeywords = (title: string): string[] => {
-      const keywords = [];
+      const keywords: string[] = [];
       const titleLower = title.toLowerCase();
       if (titleLower.match(/tecnolog|software|informática|tic|digital|sistema/i)) keywords.push('tecnología', 'software');
       if (titleLower.match(/consultor|asesor|asistencia|servicio técnico/i)) keywords.push('consultoría');
@@ -478,7 +479,7 @@ export async function POST(request: NextRequest) {
           'Accept': 'application/xml, application/atom+xml, application/json, text/xml',
           'User-Agent': 'Mozilla/5.0 (compatible; TenderScraper/1.0)'
         },
-        timeout: 30000
+        signal: AbortSignal.timeout(30000)
       });
 
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);

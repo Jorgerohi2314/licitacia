@@ -6,6 +6,7 @@ import { ThemeProvider } from "next-themes";
 import { ThemeToggle } from "@/components/themeToggle";
 import { Providers } from "./providers";
 import { SessionProviderWrapper } from "@/components/providers/session-provider";
+
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -20,12 +21,12 @@ export const metadata: Metadata = {
   title: "LicitacIA",
   description: "Recibe avisos de licitaciones públicas en España personalizados segun tus inteereses.",
   keywords: ["licitaciones públicas",
-              "contratación pública España",
-              "alertas licitaciones",
-              "subvenciones",
-              "plataforma de contratación",
-              "boletín oficial"
-            ],
+    "contratación pública España",
+    "alertas licitaciones",
+    "subvenciones",
+    "plataforma de contratación",
+    "boletín oficial"
+  ],
   authors: [{ name: "Jorge Rodriguez" }],
   openGraph: {
     title: "LicitacIA - Encuentra licitaciones públicas en España",
@@ -48,16 +49,15 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es" suppressHydrationWarning>
-      <body>
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <Providers>
-          {/* Puedes colocar el botón en un header, navbar o sidebar */}
-          <header className="p-4 flex justify-end">
+          <div className="hidden">
             <ThemeToggle />
-            <SessionProviderWrapper>
-              {children}
+          </div>
+          <SessionProviderWrapper>
+            {children}
             <Toaster />
-            </SessionProviderWrapper>
-          </header>
+          </SessionProviderWrapper>
         </Providers>
       </body>
     </html>

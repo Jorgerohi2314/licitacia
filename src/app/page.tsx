@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { UserInfo } from "@/components/userInfo"
 import { ProtectedContent } from "@/components/protected-content"
+import { Shell } from "@/components/layout/shell"
+import { ThemeToggle } from "@/components/themeToggle"
 
 export default function Home() {
   const { data: session, status } = useSession()
@@ -17,101 +19,104 @@ export default function Home() {
     )
   }
 
-  return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-b from-background to-muted">
-      {/* Header */}
-      <header className="border-b bg-background/70 backdrop-blur-sm sticky top-0 z-50">
-        <div className="container mx-auto px-6 py-4 flex items-center justify-between">
-          {/* Logo + título */}
-          <div className="flex items-center space-x-3">
-            <img src="/favicon.ico" alt="Z.ai Logo" className="w-8 h-8" />
-            <h1 className="text-xl font-bold tracking-tight">Mi App</h1>
-          </div>
+  if (session) {
+    return (
+      <Shell>
+        <div className="grid auto-rows-min gap-4 md:grid-cols-3">
+          <Card className="glass-card">
+            <CardHeader>
+              <CardTitle>Perfil</CardTitle>
+              <CardDescription>Tu información</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <UserInfo />
+            </CardContent>
+          </Card>
+          <Card className="glass-card md:col-span-2">
+            <CardHeader>
+              <CardTitle>Panel Principal</CardTitle>
+              <CardDescription>Resumen de actividad</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ProtectedContent />
+            </CardContent>
+          </Card>
+        </div>
+        <div className="min-h-[100vh] flex-1 rounded-xl bg-muted/50 md:min-h-min" />
+      </Shell>
+    )
+  }
 
-          {/* Sesión */}
-          {session ? (
-            <div className="flex items-center space-x-3">
-              <span className="text-sm text-muted-foreground">
-                👋 Bienvenido, <strong>{session.user?.name}</strong>
-              </span>
+  return (
+    <div className="min-h-screen flex flex-col bg-background">
+      {/* Landing Header */}
+      <header className="border-b bg-background/70 backdrop-blur-md sticky top-0 z-50">
+        <div className="container mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center text-primary-foreground font-bold">
+              L
             </div>
-          ) : (
-            <div className="flex items-center space-x-2">
-              <Button variant="outline" onClick={() => (window.location.href = "/auth/signin")}>
-                Iniciar Sesión
-              </Button>
-              <Button onClick={() => (window.location.href = "/auth/signup")}>
-                Registrarse
-              </Button>
-            </div>
-          )}
+            <h1 className="text-xl font-bold tracking-tight">LicitacIA</h1>
+          </div>
+          <div className="flex items-center space-x-4">
+            <ThemeToggle />
+            <Button variant="ghost" onClick={() => (window.location.href = "/auth/signin")}>
+              Iniciar Sesión
+            </Button>
+            <Button onClick={() => (window.location.href = "/auth/signup")}>
+              Registrarse
+            </Button>
+          </div>
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="flex-1 container mx-auto px-6 py-10">
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-          {/* Sidebar */}
-          <aside className="lg:col-span-1 space-y-6">
-            {session ? (
-              <Card className="shadow-md">
-                <CardHeader>
-                  <CardTitle className="text-lg">Tu perfil</CardTitle>
-                  <CardDescription>Información de usuario</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <UserInfo />
-                </CardContent>
-              </Card>
-            ) : (
-              <Card className="shadow-md">
-                <CardHeader>
-                  <CardTitle className="text-lg">Bienvenido</CardTitle>
-                  <CardDescription>
-                    Inicia sesión o regístrate para acceder a todas las funcionalidades
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <Button
-                    className="w-full"
-                    onClick={() => (window.location.href = "/auth/signin")}
-                  >
-                    Iniciar Sesión
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => (window.location.href = "/auth/signup")}
-                  >
-                    Crear Cuenta
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
-          </aside>
+      {/* Landing Hero */}
+      <main className="flex-1 flex flex-col items-center justify-center text-center p-6 space-y-8 bg-radial-[at_50%_0%] from-primary/10 to-transparent">
+        <div className="space-y-4 max-w-3xl">
+          <h2 className="text-4xl md:text-6xl font-extrabold tracking-tight lg:text-7xl">
+            Licitaciones Públicas <br />
+            <span className="text-primary">Inteligentes</span>
+          </h2>
+          <p className="text-xl text-muted-foreground max-w-[42rem] mx-auto">
+            Recibe avisos personalizados, analiza pliegos con IA y no pierdas ninguna oportunidad de negocio con la administración pública.
+          </p>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-4">
+          <Button size="lg" className="text-lg px-8 h-12" onClick={() => (window.location.href = "/auth/signup")}>
+            Empezar Gratis
+          </Button>
+          <Button size="lg" variant="outline" className="text-lg px-8 h-12">
+            Saber más
+          </Button>
+        </div>
 
-          {/* Main Content Area */}
-          <section className="lg:col-span-3 space-y-6">
-            <Card className="shadow-lg">
-              <CardHeader>
-                <CardTitle className="text-2xl font-bold tracking-tight">
-                  Panel Principal
-                </CardTitle>
-                <CardDescription>
-                  Aquí encontrarás todo lo importante de tu cuenta
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ProtectedContent />
-              </CardContent>
-            </Card>
-          </section>
+        {/* Feature Cards Preview */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-16 w-full max-w-5xl text-left">
+          <Card className="glass-card border-primary/20">
+            <CardHeader>
+              <CardTitle>Alertas en Tiempo Real</CardTitle>
+              <CardDescription>Notificaciones instantáneas de nuevas licitaciones.</CardDescription>
+            </CardHeader>
+          </Card>
+          <Card className="glass-card border-primary/20">
+            <CardHeader>
+              <CardTitle>Análisis con IA</CardTitle>
+              <CardDescription>Resúmenes automáticos de pliegos complejos.</CardDescription>
+            </CardHeader>
+          </Card>
+          <Card className="glass-card border-primary/20">
+            <CardHeader>
+              <CardTitle>Gestión Centralizada</CardTitle>
+              <CardDescription>Todo tu flujo de trabajo en un solo lugar.</CardDescription>
+            </CardHeader>
+          </Card>
         </div>
       </main>
 
-      {/* Footer */}
-      <footer className="border-t bg-background/70 backdrop-blur-sm py-4 text-center text-sm text-muted-foreground">
-        © {new Date().getFullYear()} Mi App — Todos los derechos reservados
+      <footer className="border-t py-8 text-center text-sm text-muted-foreground bg-muted/30">
+        <div className="container mx-auto">
+          © {new Date().getFullYear()} LicitacIA — Potenciando tu negocio con datos públicos.
+        </div>
       </footer>
     </div>
   )
