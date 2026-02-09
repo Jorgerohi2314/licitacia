@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useTestUserData } from '@/hooks/useTestingMode';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
@@ -9,6 +10,13 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { 
@@ -30,7 +38,15 @@ import {
   Zap,
   RefreshCw,
   Download,
-  Eye
+  Eye,
+  Sparkles,
+  Shield,
+  Layers,
+  Filter,
+  Info,
+  ArrowUpDown,
+  Calendar,
+  CalendarClock
 } from 'lucide-react';
 
 interface Tender {
@@ -49,7 +65,17 @@ interface Tender {
   publishedAt: string;
   description?: string;
   requirements?: string[];
-  contact?: string;
+  // AI Analysis fields
+  aiCategory?: string;
+  aiSectorTags?: string[];
+  aiSummary?: string;
+  aiKeywords?: string[];
+  aiRecommendations?: string[];
+  aiAnalyzedAt?: string;
+  riskLevel?: 'low' | 'medium' | 'high';
+  complexity?: 'low' | 'medium' | 'high';
+  region?: string;
+  province?: string;
 }
 
 interface UserSubscription {
@@ -81,29 +107,9 @@ interface Metrics {
   }>;
 }
 
-interface ScrapingResult {
-  success: boolean;
-  data: Tender[];
-  totalFound: number;
-  error?: string;
-}
-
-interface AnalysisResult {
-  success: boolean;
-  analysis: {
-    relevanceScore: number;
-    category: string;
-    summary: string;
-    keywords: string[];
-    requirements: string[];
-    recommendations: string[];
-    riskLevel: "low" | "medium" | "high";
-    estimatedComplexity: "low" | "medium" | "high";
-  };
-  error?: string;
-}
-
-export function Dashboard() {
+ export function Dashboard() {
+  const { isTestUser, user, regions, sectors, keywords, budgetRange, plan } = useTestUserData();
+  
   const [metrics, setMetrics] = useState<Metrics>({
     totalTenders: 0,
     relevantTenders: 0,
@@ -115,203 +121,106 @@ export function Dashboard() {
   });
 
   const [subscription, setSubscription] = useState<UserSubscription>({
-    plan: 'free',
-    keywords: ['tecnología', 'software', 'consultoría'],
+    plan: isTestUser ? ((plan as 'free' | 'premium' | 'enterprise') || 'free') : 'free',
+    keywords: isTestUser ? (keywords || ['tecnología', 'software', 'consultoría']) : ['tecnología', 'software', 'consultoría'],
     notifications: {
       email: true,
       telegram: false,
       whatsapp: false
     },
-    dailyLimit: 5
+    dailyLimit: isTestUser ? 50 : 5
   });
 
   const [recentTenders, setRecentTenders] = useState<Tender[]>([]);
+  const [allTenders, setAllTenders] = useState<Tender[]>([]);
   const [newKeyword, setNewKeyword] = useState('');
   const [loading, setLoading] = useState(true);
   const [scraping, setScraping] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [viewAllTenders, setViewAllTenders] = useState(false);
+  
+  // Filtros
+  const [filterMinRelevance, setFilterMinRelevance] = useState<number>(0);
+  
+  // Ordenación
+  const [sortBy, setSortBy] = useState<'publishedAt' | 'deadline'>('publishedAt');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
-  // Función para llamar a la API de scraping
   const fetchTenders = async () => {
     setScraping(true);
     setError(null);
 
     try {
-    // 1. Ejecutar scraping en segundo plano (no esperamos el resultado)
-    const scrapePromise = fetch('/api/scrape', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        action: 'scrape',
-        sourceId: 'boe'
-      })
-    })
-    .then(response => {
-      if (!response.ok) {
-        throw new Error(`Scraping error: ${response.statusText}`);
-      }
-      return response.json();
-    })
-    .then(data => {
-      console.log('Scraping completed:', data);
-      // No hacemos nada con el resultado, solo logging
-    })
-    .catch(error => {
-      console.warn('Scraping warning:', error.message);
-      // No mostramos error al usuario por fallos de scraping
-    });
-
-    // 2. Obtener tenders existentes (esto es lo importante para el dashboard)
-    const tendersUrl = `/api/tenders?limit=${subscription.dailyLimit}`;
-    const tendersResponse = await fetch(tendersUrl);
-
-    if (!tendersResponse.ok) {
-      throw new Error(`Error ${tendersResponse.status}: ${tendersResponse.statusText}`);
-    }
-
-    const tenders = await tendersResponse.json();
-    
-    // 3. Verificar que la respuesta es un array
-    if (!Array.isArray(tenders)) {
-      throw new Error('Formato de respuesta inválido de /api/tenders');
-    }
-
-      setRecentTenders(tenders);
-    setLastUpdate(new Date());
-    
-    // 4. Actualizar métricas
-    setMetrics(prev => ({
-      ...prev,
-      totalTenders: tenders.length,
-      relevantTenders: tenders.filter((t: Tender) => t.relevanceScore > 70).length,
-      alertsSent: prev.alertsSent + tenders.length
-    }));
-
-    // 5. Actualizar actividad reciente
-    const newActivity = {
-      action: 'Datos actualizados',
-      timestamp: new Date().toLocaleString(),
-      details: `${tenders.length} licitaciones cargadas`
-    };
-    
-    setMetrics(prev => ({
-      ...prev,
-      recentActivity: [newActivity, ...prev.recentActivity.slice(0, 9)]
-    }));
-
-    // 6. Esperar a que termine el scraping (pero no fallar si hay error)
-    await scrapePromise;
-
-  } catch (err) {
-    setError(err instanceof Error ? err.message : 'Error desconocido');
-    console.error('Error fetching tenders:', err);
-  } finally {
-    setScraping(false);
-  }
-};
-
-  // Función para analizar una licitación específica
-  const analyzeTender = async (tender: Tender) => {
-    setAnalyzing(true);
-    setError(null);
-
-    try {
-      console.log('Analizando licitación:', tender.id, tender.title);
-
-      // Preparar datos para enviar a /api/analyze
-      const requestBody = {
-      tender: {
-        title: tender.title || 'Sin título',
-        description: tender.description || tender.summary || 'Sin descripción',
-        organization: tender.organization || 'Organismo no especificado',
-        budget: tender.budget || 0,
-        deadline: tender.deadline || 'No especificado'
-      },
-      userKeywords: subscription.keywords || [],
-      userPreferences: {
-        categories: ['Tecnología', 'Consultoría', 'Construcción'],
-        minBudget: 10000,
-        regions: ['Nacional']
-      }
-    };
-
-    console.log('Request body:', JSON.stringify(requestBody, null, 2));
-      const response = await fetch('/api/analyze', {
+      // Trigger scraping en background
+      fetch('/api/scrape', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody)
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'scrape', sourceId: 'madrid' })
+      }).catch(err => console.warn('Scraping warning:', err.message));
+
+      // Trigger análisis en batch de tenders nuevos
+      fetch('/api/scrape', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'analyze-batch', limit: 3 })
+      }).catch(err => console.warn('Analysis warning:', err.message));
+
+        // Obtener tenders con filtros - admin puede ver todas
+      const params = new URLSearchParams({
+        limit: '50',
+        q: subscription.keywords.join(' '),
+        ...(filterMinRelevance > 0 && { minRelevance: filterMinRelevance.toString() }),
+        sortBy: sortBy,
+        sortOrder: sortOrder
       });
 
-      if (!response.ok ) {
-        throw new Error(`Error ${response.status}: ${response.statusText}`);
+      const tendersUrl = `/api/tenders?${params.toString()}`;
+      const tendersResponse = await fetch(tendersUrl);
+
+      if (!tendersResponse.ok) {
+        throw new Error(`Error ${tendersResponse.status}: ${tendersResponse.statusText}`);
       }
 
-      const result: AnalysisResult = await response.json();
+      const tenders = await tendersResponse.json();
       
-      if (result.success) {
-        // Actualizar la licitación con el análisis
-        setRecentTenders(prev => 
-          prev.map(t => 
-            t.id === tender.id 
-              ? {
-                  ...t,
-                  relevanceScore: result.analysis.relevanceScore,
-                  category: result.analysis.category,
-                  keywords: result.analysis.keywords,
-                  summary: result.analysis.summary,
-                  requirements: result.analysis.requirements,
-                  status: 'processed' as const
-                }
-              : t
-          )
-        );
-
-        // Actualizar actividad reciente
-        const newActivity = {
-          action: 'Análisis IA completado',
-          timestamp: new Date().toLocaleString(),
-          details: `Licitación analizada - Relevancia: ${result.analysis.relevanceScore}%`
-        };
-        
-        setMetrics(prev => ({
-          ...prev,
-          recentActivity: [newActivity, ...prev.recentActivity.slice(0, 9)]
-        }));
-
-      } else {
-        throw new Error(result.error || 'Error en el análisis');
+      if (!Array.isArray(tenders)) {
+        throw new Error('Formato de respuesta inválido de /api/tenders');
       }
+
+      setRecentTenders(tenders);
+      setLastUpdate(new Date());
+      
+      setMetrics(prev => ({
+        ...prev,
+        totalTenders: tenders.length,
+        relevantTenders: tenders.filter((t: Tender) => t.relevanceScore > 70).length,
+        alertsSent: prev.alertsSent + tenders.length
+      }));
+
+      const newActivity = {
+        action: 'Datos actualizados',
+        timestamp: new Date().toLocaleString(),
+        details: `${tenders.length} licitaciones cargadas`
+      };
+      
+      setMetrics(prev => ({
+        ...prev,
+        recentActivity: [newActivity, ...prev.recentActivity.slice(0, 9)]
+      }));
+
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error desconocido');
-      console.error('Error analyzing tender:', err);
+      console.error('Error fetching tenders:', err);
     } finally {
-      setAnalyzing(false);
+      setScraping(false);
     }
   };
 
-  // Función para analizar todas las licitaciones pendientes
-  const analyzeAllTenders = async () => {
-    const unprocessedTenders = recentTenders.filter(t => t.status === 'new');
-    
-    for (const tender of unprocessedTenders) {
-      await analyzeTender(tender);
-      // Pequeña pausa entre análisis para no saturar la API
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-  };
-
-  // Cargar datos iniciales (métricas base)
   useEffect(() => {
     const loadInitialData = async () => {
       setLoading(true);
-      
-      // Cargar métricas iniciales (podrían venir de una base de datos)
       setMetrics({
         totalTenders: 0,
         relevantTenders: 0,
@@ -327,18 +236,17 @@ export function Dashboard() {
         ],
         recentActivity: []
       });
-
       setLoading(false);
     };
 
     loadInitialData();
   }, []);
 
-  // Actualizar métricas cuando cambien las licitaciones
   useEffect(() => {
     if (recentTenders.length > 0) {
       const categories = recentTenders.reduce((acc, tender) => {
-        acc[tender.category] = (acc[tender.category] || 0) + 1;
+        const cat = tender.aiCategory || tender.category;
+        acc[cat] = (acc[cat] || 0) + 1;
         return acc;
       }, {} as Record<string, number>);
 
@@ -354,6 +262,42 @@ export function Dashboard() {
       }));
     }
   }, [recentTenders]);
+
+  const fetchAllTenders = async () => {
+    setScraping(true);
+    setError(null);
+
+    try {
+      const params = new URLSearchParams({
+        limit: '10000', // Un límite muy alto para obtener todas
+        ...(filterMinRelevance > 0 && { minRelevance: filterMinRelevance.toString() }),
+        sortBy: sortBy,
+        sortOrder: sortOrder
+      });
+
+      const tendersUrl = `/api/tenders?${params.toString()}`;
+      const tendersResponse = await fetch(tendersUrl);
+
+      if (!tendersResponse.ok) {
+        throw new Error(`Error ${tendersResponse.status}: ${tendersResponse.statusText}`);
+      }
+
+      const tenders = await tendersResponse.json();
+      
+      if (!Array.isArray(tenders)) {
+        throw new Error('Formato de respuesta inválido de /api/tenders');
+      }
+
+      setAllTenders(tenders);
+      setLastUpdate(new Date());
+      
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error desconocido');
+      console.error('Error fetching all tenders:', err);
+    } finally {
+      setScraping(false);
+    }
+  };
 
   const addKeyword = () => {
     if (newKeyword.trim() && !subscription.keywords.includes(newKeyword.trim())) {
@@ -381,6 +325,56 @@ export function Dashboard() {
     }));
   };
 
+  const getRiskBadge = (riskLevel?: string) => {
+    if (!riskLevel) return null;
+    const colors = {
+      low: 'bg-green-100 text-green-800 border-green-300',
+      medium: 'bg-yellow-100 text-yellow-800 border-yellow-300',
+      high: 'bg-red-100 text-red-800 border-red-300'
+    };
+    const labels = { low: 'Bajo', medium: 'Medio', high: 'Alto' };
+    return (
+      <Badge variant="outline" className={colors[riskLevel as keyof typeof colors]}>
+        <Shield className="h-3 w-3 mr-1" />
+        Riesgo: {labels[riskLevel as keyof typeof labels]}
+      </Badge>
+    );
+  };
+
+  const getComplexityBadge = (complexity?: string) => {
+    if (!complexity) return null;
+    const colors = {
+      low: 'bg-blue-100 text-blue-800 border-blue-300',
+      medium: 'bg-orange-100 text-orange-800 border-orange-300',
+      high: 'bg-purple-100 text-purple-800 border-purple-300'
+    };
+    const labels = { low: 'Baja', medium: 'Media', high: 'Alta' };
+    return (
+      <Badge variant="outline" className={colors[complexity as keyof typeof colors]}>
+        <Layers className="h-3 w-3 mr-1" />
+        Complejidad: {labels[complexity as keyof typeof labels]}
+      </Badge>
+    );
+  };
+
+  const getRelevanceColor = (score: number) => {
+    if (score >= 70) return 'text-green-600';
+    if (score >= 40) return 'text-yellow-600';
+    return 'text-red-600';
+  };
+
+  // Filtrar y ordenar licitaciones
+  const filteredTenders = recentTenders
+    .filter(t => {
+      if (t.relevanceScore < filterMinRelevance) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const dateA = new Date(sortBy === 'publishedAt' ? a.publishedAt : a.deadline).getTime();
+      const dateB = new Date(sortBy === 'publishedAt' ? b.publishedAt : b.deadline).getTime();
+      return sortOrder === 'asc' ? dateA - dateB : dateB - dateA;
+    });
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -395,11 +389,11 @@ export function Dashboard() {
   return (
     <div className="container mx-auto p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Dashboard de Alertas de Licitaciones</h1>
-          <p className="text-muted-foreground">
-            Sistema inteligente de monitorización de oportunidades de contratación pública
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="flex-1">
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Dashboard de Oportunidades</h1>
+          <p className="text-muted-foreground text-sm md:text-base">
+            Sistema inteligente de monitorización de licitaciones para PYMES
           </p>
           {lastUpdate && (
             <p className="text-sm text-muted-foreground mt-1">
@@ -407,21 +401,12 @@ export function Dashboard() {
             </p>
           )}
         </div>
-        <div className="flex items-center space-x-2">
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
           <Badge variant={subscription.plan === 'free' ? 'secondary' : 'default'} className="text-sm">
             Plan {subscription.plan === 'free' ? 'Gratuito' : subscription.plan === 'premium' ? 'Premium' : 'Empresarial'}
           </Badge>
-          <Button
-            onClick={fetchTenders}
-            disabled={scraping}
-            variant="outline"
-            size="sm"
-          >
-            {scraping ? (
-              <RefreshCw className="h-4 w-4 animate-spin mr-2" />
-            ) : (
-              <Download className="h-4 w-4 mr-2" />
-            )}
+          <Button onClick={fetchTenders} disabled={scraping} size="sm" className="w-full md:w-auto">
+            {scraping ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Download className="h-4 w-4 mr-2" />}
             {scraping ? 'Buscando...' : 'Buscar Licitaciones'}
           </Button>
         </div>
@@ -435,6 +420,23 @@ export function Dashboard() {
         </Alert>
       )}
 
+      {/* Indicador de modo testing */}
+      {isTestUser && (
+        <Alert className="mb-6 bg-gradient-to-r from-orange-50 to-red-50 border-orange-200">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="h-3 w-3 bg-orange-500 rounded-full animate-pulse"></div>
+              <AlertDescription className="text-orange-800 font-medium">
+                🚀 MODO TESTING ACTIVADO - Usuario: {user?.email}
+              </AlertDescription>
+            </div>
+            <div className="text-sm text-orange-600">
+              Regiones: {regions.join(', ')}
+            </div>
+          </div>
+        </Alert>
+      )}
+
       {/* Métricas principales */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
@@ -444,22 +446,20 @@ export function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{metrics.totalTenders.toLocaleString()}</div>
-            <p className="text-xs text-muted-foreground">
-              Encontradas en la última búsqueda
-            </p>
+            <p className="text-xs text-muted-foreground">Encontradas en la última búsqueda</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Licitaciones Relevantes</CardTitle>
+            <CardTitle className="text-sm font-medium">Oportunidades Destacadas</CardTitle>
             <Target className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{metrics.relevantTenders}</div>
+            <div className="text-2xl font-bold text-green-600">{metrics.relevantTenders}</div>
             <p className="text-xs text-muted-foreground">
               {metrics.totalTenders > 0 
-                ? `${((metrics.relevantTenders / metrics.totalTenders) * 100).toFixed(1)}% de relevancia`
+                ? `${((metrics.relevantTenders / metrics.totalTenders) * 100).toFixed(1)}% relevancia alta`
                 : 'Ejecuta una búsqueda'
               }
             </p>
@@ -468,14 +468,14 @@ export function Dashboard() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Alertas Enviadas</CardTitle>
-            <Bell className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Análisis IA</CardTitle>
+            <Sparkles className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{metrics.alertsSent.toLocaleString()}</div>
-            <p className="text-xs text-muted-foreground">
-              En esta sesión
-            </p>
+            <div className="text-2xl font-bold text-blue-600">
+              {recentTenders.filter(t => t.aiAnalyzedAt).length}
+            </div>
+            <p className="text-xs text-muted-foreground">Licitaciones analizadas con IA</p>
           </CardContent>
         </Card>
 
@@ -486,29 +486,400 @@ export function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-600">Activo</div>
-            <p className="text-xs text-muted-foreground">
-              APIs funcionando correctamente
-            </p>
+            <p className="text-xs text-muted-foreground">APIs funcionando correctamente</p>
           </CardContent>
         </Card>
       </div>
 
       {/* Tabs principales */}
-      <Tabs defaultValue="overview" className="space-y-4">
+      <Tabs defaultValue="tenders" className="space-y-4">
         <TabsList>
-          <TabsTrigger value="overview">Visión General</TabsTrigger>
-          <TabsTrigger value="tenders">Licitaciones</TabsTrigger>
-          <TabsTrigger value="subscription">Suscripción</TabsTrigger>
-          <TabsTrigger value="settings">Configuración</TabsTrigger>
+          <TabsTrigger value="tenders">
+            <Search className="h-4 w-4 mr-2" />
+            Licitaciones
+          </TabsTrigger>
+          {isTestUser && (
+            <TabsTrigger value="all-tenders">
+              <Database className="h-4 w-4 mr-2" />
+              Todas las Licitaciones
+            </TabsTrigger>
+          )}
+          <TabsTrigger value="overview">
+            <BarChart3 className="h-4 w-4 mr-2" />
+            Visión General
+          </TabsTrigger>
+          <TabsTrigger value="subscription">
+            <CreditCard className="h-4 w-4 mr-2" />
+            Suscripción
+          </TabsTrigger>
+          <TabsTrigger value="settings">
+            <Settings className="h-4 w-4 mr-2" />
+            Configuración
+          </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="tenders" className="space-y-4">
+          {/* Filtros */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Filter className="h-4 w-4" />
+                Filtros y Ordenación
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                {/* Relevancia mínima con info */}
+                <div className="flex-1 min-w-[200px]">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Label>Relevancia mínima: {filterMinRelevance}%</Label>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-5 w-5 p-0">
+                          <Info className="h-4 w-4 text-muted-foreground" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-80">
+                        <div className="space-y-2">
+                          <h4 className="font-semibold flex items-center gap-2">
+                            <Target className="h-4 w-4" />
+                            ¿Qué es la relevancia?
+                          </h4>
+                          <p className="text-sm text-muted-foreground">
+                            La relevancia es una puntuación (0-100%) que indica qué tan bien se ajusta 
+                            una licitación a tus preferencias de perfil:
+                          </p>
+                          <ul className="text-sm text-muted-foreground list-disc list-inside space-y-1">
+                            <li><span className="text-green-600 font-medium">70-100%:</span> Muy relevante - Coincide perfectamente</li>
+                            <li><span className="text-yellow-600 font-medium">40-69%:</span> Relevante - Buena coincidencia</li>
+                            <li><span className="text-red-600 font-medium">0-39%:</span> Poca relevancia - Coincidencia baja</li>
+                          </ul>
+                          <p className="text-sm text-muted-foreground mt-2">
+                            Ajusta el filtro para ver solo licitaciones con una puntuación mínima.
+                          </p>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={filterMinRelevance}
+                    onChange={(e) => setFilterMinRelevance(Number(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+                
+                {/* Ordenar por */}
+                <div className="flex-1 min-w-[200px]">
+                  <Label className="flex items-center gap-2">
+                    <ArrowUpDown className="h-4 w-4" />
+                    Ordenar por
+                  </Label>
+                  <Select value={sortBy} onValueChange={(value) => setSortBy(value as 'publishedAt' | 'deadline')}>
+                    <SelectTrigger className="mt-2">
+                      <SelectValue placeholder="Selecciona..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="publishedAt">
+                        <div className="flex items-center gap-2">
+                          <Calendar className="h-4 w-4" />
+                          Fecha de publicación
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="deadline">
+                        <div className="flex items-center gap-2">
+                          <CalendarClock className="h-4 w-4" />
+                          Fecha límite
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                {/* Orden ascendente/descendente */}
+                <div className="flex-1 min-w-[200px]">
+                  <Label>Orden</Label>
+                  <Select value={sortOrder} onValueChange={(value) => setSortOrder(value as 'asc' | 'desc')}>
+                    <SelectTrigger className="mt-2">
+                      <SelectValue placeholder="Selecciona..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="desc">
+                        <div className="flex items-center gap-2">
+                          <ArrowUpDown className="h-4 w-4 rotate-180" />
+                          Más recientes primero
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="asc">
+                        <div className="flex items-center gap-2">
+                          <ArrowUpDown className="h-4 w-4" />
+                          Más antiguas primero
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    setFilterMinRelevance(0);
+                    setSortBy('publishedAt');
+                    setSortOrder('desc');
+                  }}
+                  className="self-end"
+                >
+                  Limpiar Filtros
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Lista de licitaciones */}
+          <Card>
+            <CardHeader>
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div className="flex-1">
+                  <CardTitle>Oportunidades Detectadas</CardTitle>
+                  <CardDescription>
+                    {filteredTenders.length} licitaciones encontradas
+                  </CardDescription>
+                </div>
+                <Button onClick={fetchTenders} disabled={scraping} size="sm" className="w-full sm:w-auto">
+                  {scraping ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Download className="h-4 w-4 mr-2" />}
+                  {scraping ? 'Buscando...' : 'Actualizar'}
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {filteredTenders.length > 0 ? (
+                  filteredTenders.map((tender) => (
+                    <div key={tender.id} className="border rounded-lg p-4 space-y-3">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <h3 className="font-semibold text-lg">{tender.title}</h3>
+                          <p className="text-sm text-muted-foreground">{tender.organization}</p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {getRiskBadge(tender.riskLevel)}
+                          {getComplexityBadge(tender.complexity)}
+                          <Badge variant={tender.aiAnalyzedAt ? 'default' : 'secondary'}>
+                            {tender.aiAnalyzedAt ? (
+                              <>
+                                <Sparkles className="h-3 w-3 mr-1" />
+                                Analizado con IA
+                              </>
+                            ) : 'Por analizar'}
+                          </Badge>
+                        </div>
+                      </div>
+                       
+                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                         <div>
+                           <span className="text-muted-foreground">Presupuesto:</span>
+                           <p className="font-medium">
+                             {tender.budget ? `€${tender.budget.toLocaleString()}` : 'No especificado'}
+                           </p>
+                         </div>
+                         <div>
+                           <span className="text-muted-foreground">Fecha límite:</span>
+                           <p className="font-medium">{tender.deadline}</p>
+                         </div>
+                         <div>
+                           <span className="text-muted-foreground">Publicación:</span>
+                           <p className="font-medium">{new Date(tender.publishedAt).toLocaleDateString('es-ES')}</p>
+                         </div>
+                         <div>
+                           <span className="text-muted-foreground">Relevancia IA:</span>
+                           <p className={`font-bold ${getRelevanceColor(tender.relevanceScore)}`}>
+                             {tender.relevanceScore}%
+                           </p>
+                         </div>
+                       </div>
+                       
+                      {/* Tags de sector IA */}
+                      {tender.aiSectorTags && tender.aiSectorTags.length > 0 && (
+                        <div>
+                          <span className="text-muted-foreground text-sm">Sectores detectados:</span>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {tender.aiSectorTags.map((tag, idx) => (
+                              <Badge key={idx} variant="outline" className="text-xs bg-blue-50 border-blue-200">
+                                {tag}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                       
+                      <div>
+                        <span className="text-muted-foreground text-sm">
+                          {tender.aiSummary ? 'Resumen IA:' : 'Resumen:'}
+                        </span>
+                        <p className="text-sm mt-1">{tender.aiSummary || tender.summary}</p>
+                      </div>
+
+                      {/* Recomendaciones IA */}
+                      {tender.aiRecommendations && tender.aiRecommendations.length > 0 && (
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                          <span className="text-sm font-medium text-blue-900 flex items-center gap-2">
+                            <Sparkles className="h-4 w-4" />
+                            Recomendaciones de IA:
+                          </span>
+                          <ul className="text-sm mt-2 space-y-1 text-blue-800">
+                            {tender.aiRecommendations.slice(0, 3).map((rec, idx) => (
+                              <li key={idx} className="flex items-start gap-2">
+                                <CheckCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                                <span>{rec}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {tender.sourceUrl && (
+                        <div className="flex justify-end">
+                          <Button onClick={() => tender.sourceUrl && window.open(tender.sourceUrl, '_blank')} variant="outline" size="sm">
+                            <Eye className="h-4 w-4 mr-2" />
+                            Ver Original
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center py-8">
+                    <Database className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                    <h3 className="text-lg font-medium">No hay licitaciones</h3>
+                    <p className="text-muted-foreground mb-4">
+                      {filterMinRelevance > 0
+                        ? 'No hay licitaciones que coincidan con los filtros'
+                        : 'Ejecuta una búsqueda para encontrar licitaciones relevantes'
+                      }
+                    </p>
+                    <Button onClick={fetchTenders} disabled={scraping}>
+                      {scraping ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Download className="h-4 w-4 mr-2" />}
+                      {scraping ? 'Buscando...' : 'Buscar Licitaciones'}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {isTestUser && (
+          <TabsContent value="all-tenders" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div className="flex-1">
+                    <CardTitle>Todas las Licitaciones en la Base de Datos</CardTitle>
+                    <CardDescription>
+                      Vista completa de todas las licitaciones scrapeadas
+                    </CardDescription>
+                  </div>
+                  <Button onClick={fetchAllTenders} disabled={scraping} size="sm" className="w-full sm:w-auto">
+                    {scraping ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Database className="h-4 w-4 mr-2" />}
+                    {scraping ? 'Cargando...' : 'Cargar Todas'}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {allTenders.length > 0 ? (
+                    allTenders.map((tender) => (
+                      <div key={tender.id} className="border rounded-lg p-4 space-y-3">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <h3 className="font-semibold text-lg">{tender.title}</h3>
+                            <p className="text-sm text-muted-foreground">{tender.organization}</p>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {getRiskBadge(tender.riskLevel)}
+                            {getComplexityBadge(tender.complexity)}
+                            <Badge variant={tender.aiAnalyzedAt ? 'default' : 'secondary'}>
+                              {tender.aiAnalyzedAt ? (
+                                <>
+                                  <Sparkles className="h-3 w-3 mr-1" />
+                                  Analizado con IA
+                                </>
+                              ) : 'Por analizar'}
+                            </Badge>
+                          </div>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+                          <div>
+                            <span className="text-muted-foreground">Presupuesto:</span>
+                            <p className="font-medium">
+                              {tender.budget ? `€${tender.budget.toLocaleString()}` : 'No especificado'}
+                            </p>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Fecha límite:</span>
+                            <p className="font-medium">{tender.deadline}</p>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Relevancia IA:</span>
+                            <p className={`font-bold ${getRelevanceColor(tender.relevanceScore)}`}>
+                              {tender.relevanceScore}%
+                            </p>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Categoría:</span>
+                            <p className="font-medium">{tender.aiCategory || tender.category}</p>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Comunidad:</span>
+                            <p className="font-medium">{tender.region || 'Nacional'}</p>
+                          </div>
+                        </div>
+                        
+                        <div>
+                          <span className="text-muted-foreground text-sm">
+                            {tender.aiSummary ? 'Resumen IA:' : 'Resumen:'}
+                          </span>
+                          <p className="text-sm mt-1">{tender.aiSummary || tender.summary}</p>
+                        </div>
+
+                        {tender.sourceUrl && (
+                          <div className="flex justify-end">
+                            <Button onClick={() => tender.sourceUrl && window.open(tender.sourceUrl, '_blank')} variant="outline" size="sm">
+                              <Eye className="h-4 w-4 mr-2" />
+                              Ver Original
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center py-8">
+                      <Database className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                      <h3 className="text-lg font-medium">No hay licitaciones</h3>
+                      <p className="text-muted-foreground mb-4">
+                        Ejecuta scraping para cargar licitaciones en la base de datos
+                      </p>
+                      <Button onClick={fetchAllTenders} disabled={scraping}>
+                        {scraping ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Database className="h-4 w-4 mr-2" />}
+                        {scraping ? 'Cargando...' : 'Cargar Todas'}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
 
         <TabsContent value="overview" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
-            {/* Categorías principales */}
             <Card>
               <CardHeader>
                 <CardTitle>Categorías Principales</CardTitle>
-                <CardDescription>Licitaciones por sector</CardDescription>
+                <CardDescription>Licitaciones por sector (IA)</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
@@ -522,15 +893,12 @@ export function Dashboard() {
                     </div>
                   ))}
                   {metrics.topCategories.length === 0 && (
-                    <p className="text-sm text-muted-foreground">
-                      Ejecuta una búsqueda para ver las categorías
-                    </p>
+                    <p className="text-sm text-muted-foreground">Ejecuta una búsqueda para ver las categorías</p>
                   )}
                 </div>
               </CardContent>
             </Card>
 
-            {/* Actividad reciente */}
             <Card>
               <CardHeader>
                 <CardTitle>Actividad Reciente</CardTitle>
@@ -542,7 +910,7 @@ export function Dashboard() {
                     metrics.recentActivity.map((activity, index) => (
                       <div key={index} className="flex items-start space-x-3">
                         <div className="flex-shrink-0 mt-0.5">
-                          {activity.action.includes('Scraping') && <Database className="h-4 w-4 text-blue-500" />}
+                          {activity.action.includes('Datos') && <Database className="h-4 w-4 text-blue-500" />}
                           {activity.action.includes('Alerta') && <Bell className="h-4 w-4 text-green-500" />}
                           {activity.action.includes('Usuario') && <Users className="h-4 w-4 text-purple-500" />}
                           {activity.action.includes('Análisis') && <Zap className="h-4 w-4 text-orange-500" />}
@@ -555,9 +923,7 @@ export function Dashboard() {
                       </div>
                     ))
                   ) : (
-                    <p className="text-sm text-muted-foreground">
-                      No hay actividad reciente. Ejecuta una búsqueda para comenzar.
-                    </p>
+                    <p className="text-sm text-muted-foreground">No hay actividad reciente</p>
                   )}
                 </div>
               </CardContent>
@@ -565,159 +931,8 @@ export function Dashboard() {
           </div>
         </TabsContent>
 
-        <TabsContent value="tenders" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Licitaciones Recientes</CardTitle>
-                  <CardDescription>Oportunidades detectadas por el sistema</CardDescription>
-                </div>
-                <div className="flex items-center space-x-2">
-                  {recentTenders.some(t => t.status === 'new') && (
-                    <Button
-                      onClick={analyzeAllTenders}
-                      disabled={analyzing}
-                      variant="outline"
-                      size="sm"
-                    >
-                      {analyzing ? (
-                        <RefreshCw className="h-4 w-4 animate-spin mr-2" />
-                      ) : (
-                        <Zap className="h-4 w-4 mr-2" />
-                      )}
-                      {analyzing ? 'Analizando...' : 'Analizar Todas'}
-                    </Button>
-                  )}
-                  <Button
-                    onClick={fetchTenders}
-                    disabled={scraping}
-                    size="sm"
-                  >
-                    {scraping ? (
-                      <RefreshCw className="h-4 w-4 animate-spin mr-2" />
-                    ) : (
-                      <Download className="h-4 w-4 mr-2" />
-                    )}
-                    {scraping ? 'Buscando...' : 'Actualizar'}
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {recentTenders.length > 0 ? (
-                  recentTenders.map((tender) => (
-                    <div key={tender.id} className="border rounded-lg p-4 space-y-3">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <h3 className="font-semibold">{tender.title}</h3>
-                          <p className="text-sm text-muted-foreground">{tender.organization}</p>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <Badge variant={tender.status === 'new' ? 'default' : tender.status === 'processed' ? 'secondary' : 'outline'}>
-                            {tender.status === 'new' ? 'Nuevo' : tender.status === 'processed' ? 'Procesado' : 'Enviado'}
-                          </Badge>
-                          <Badge variant="outline">{tender.category}</Badge>
-                          {tender.status === 'new' && (
-                            <Button
-                              onClick={() => analyzeTender(tender)}
-                              disabled={analyzing}
-                              size="sm"
-                              variant="ghost"
-                            >
-                              <Eye className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                      
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                        <div>
-                          <span className="text-muted-foreground">Presupuesto:</span>
-                          <p className="font-medium">
-                            {tender.budget ? `€${tender.budget.toLocaleString()}` : 'No especificado'}
-                          </p>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">Fecha límite:</span>
-                          <p className="font-medium">{tender.deadline}</p>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">Relevancia:</span>
-                          <p className="font-medium">{tender.relevanceScore}%</p>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">Palabras clave:</span>
-                          <div className="flex flex-wrap gap-1 mt-1">
-                            {tender.keywords.slice(0, 3).map((keyword) => (
-                              <Badge key={keyword} variant="outline" className="text-xs">
-                                {keyword}
-                              </Badge>
-                            ))}
-                            {tender.keywords.length > 3 && (
-                              <Badge variant="outline" className="text-xs">
-                                +{tender.keywords.length - 3}
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <div>
-                        <span className="text-muted-foreground">Resumen:</span>
-                        <p className="text-sm mt-1">{tender.summary}</p>
-                      </div>
-
-                      {tender.requirements && tender.requirements.length > 0 && (
-                        <div>
-                          <span className="text-muted-foreground">Requisitos principales:</span>
-                          <ul className="text-sm mt-1 list-disc list-inside">
-                            {tender.requirements.slice(0, 3).map((req, idx) => (
-                              <li key={idx}>{req}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-
-                      {tender.url && (
-                        <div className="flex justify-end">
-                          <Button
-                            onClick={() => window.open(tender.url, '_blank')}
-                            variant="outline"
-                            size="sm"
-                          >
-                            Ver Original
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-center py-8">
-                    <Database className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                    <h3 className="text-lg font-medium">No hay licitaciones</h3>
-                    <p className="text-muted-foreground mb-4">
-                      Ejecuta una búsqueda para encontrar licitaciones relevantes
-                    </p>
-                    <Button onClick={fetchTenders} disabled={scraping}>
-                      {scraping ? (
-                        <RefreshCw className="h-4 w-4 animate-spin mr-2" />
-                      ) : (
-                        <Download className="h-4 w-4 mr-2" />
-                      )}
-                      {scraping ? 'Buscando...' : 'Buscar Licitaciones'}
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
         <TabsContent value="subscription" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
-            {/* Plan actual */}
             <Card>
               <CardHeader>
                 <CardTitle>Plan Actual</CardTitle>
@@ -730,45 +945,19 @@ export function Dashboard() {
                     {subscription.plan === 'free' ? 'Gratuito' : subscription.plan === 'premium' ? 'Premium' : 'Empresarial'}
                   </Badge>
                 </div>
-                
+                 
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">Límite diario</span>
                   <span className="font-medium">{subscription.dailyLimit} alertas</span>
                 </div>
-                
+                 
                 {subscription.nextBillingDate && (
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-muted-foreground">Próximo cobro</span>
                     <span className="font-medium">{subscription.nextBillingDate}</span>
                   </div>
                 )}
-                
-                <div className="space-y-2">
-                  <span className="text-sm font-medium">Características del plan:</span>
-                  <ul className="text-sm space-y-1">
-                    <li className="flex items-center space-x-2">
-                      <CheckCircle className="h-4 w-4 text-green-500" />
-                      <span>Scraping en tiempo real</span>
-                    </li>
-                    <li className="flex items-center space-x-2">
-                      <CheckCircle className="h-4 w-4 text-green-500" />
-                      <span>Análisis con IA avanzada</span>
-                    </li>
-                    {subscription.plan !== 'free' && (
-                      <li className="flex items-center space-x-2">
-                        <CheckCircle className="h-4 w-4 text-green-500" />
-                        <span>Notificaciones multi-canal</span>
-                      </li>
-                    )}
-                    {subscription.plan === 'enterprise' && (
-                      <li className="flex items-center space-x-2">
-                        <CheckCircle className="h-4 w-4 text-green-500" />
-                        <span>API dedicada</span>
-                      </li>
-                    )}
-                  </ul>
-                </div>
-                
+                 
                 {subscription.plan === 'free' && (
                   <div className="space-y-2">
                     <Button onClick={() => upgradePlan('premium')} className="w-full">
@@ -783,7 +972,6 @@ export function Dashboard() {
               </CardContent>
             </Card>
 
-            {/* Palabras clave */}
             <Card>
               <CardHeader>
                 <CardTitle>Palabras Clave</CardTitle>
@@ -799,7 +987,7 @@ export function Dashboard() {
                   />
                   <Button onClick={addKeyword}>Añadir</Button>
                 </div>
-                
+                 
                 <div className="space-y-2">
                   <span className="text-sm font-medium">Palabras clave activas:</span>
                   <div className="flex flex-wrap gap-2">
@@ -810,14 +998,6 @@ export function Dashboard() {
                     ))}
                   </div>
                 </div>
-                
-                <Alert>
-                  <AlertTriangle className="h-4 w-4" />
-                  <AlertDescription>
-                    Las palabras clave se envían a las APIs de scraping y análisis. 
-                    El sistema buscará coincidencias en títulos y descripciones de licitaciones.
-                  </AlertDescription>
-                </Alert>
               </CardContent>
             </Card>
           </div>
@@ -825,7 +1005,6 @@ export function Dashboard() {
 
         <TabsContent value="settings" className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
-            {/* Notificaciones */}
             <Card>
               <CardHeader>
                 <CardTitle>Notificaciones</CardTitle>
@@ -847,7 +1026,7 @@ export function Dashboard() {
                     }
                   />
                 </div>
-                
+                 
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2">
                     <MessageCircle className="h-4 w-4" />
@@ -864,7 +1043,7 @@ export function Dashboard() {
                     disabled={subscription.plan === 'free'}
                   />
                 </div>
-                
+                 
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2">
                     <Smartphone className="h-4 w-4" />
@@ -881,19 +1060,9 @@ export function Dashboard() {
                     disabled={subscription.plan === 'free'}
                   />
                 </div>
-                
-                {subscription.plan === 'free' && (
-                  <Alert>
-                    <AlertTriangle className="h-4 w-4" />
-                    <AlertDescription>
-                      Las notificaciones por Telegram y WhatsApp están disponibles en planes premium.
-                    </AlertDescription>
-                  </Alert>
-                )}
               </CardContent>
             </Card>
 
-            {/* Configuración de APIs */}
             <Card>
               <CardHeader>
                 <CardTitle>Configuración de APIs</CardTitle>
@@ -901,112 +1070,19 @@ export function Dashboard() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="scrape-frequency">Frecuencia de scraping</Label>
-                  <Select defaultValue="manual">
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecciona frecuencia" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="manual">Manual</SelectItem>
-                      <SelectItem value="hourly">Cada hora</SelectItem>
-                      <SelectItem value="daily">Diaria</SelectItem>
-                      <SelectItem value="weekly">Semanal</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                
-                <div className="space-y-2">
                   <Label htmlFor="min-budget">Presupuesto mínimo (€)</Label>
                   <Input id="min-budget" type="number" placeholder="10000" />
                 </div>
-                
+                 
                 <div className="space-y-2">
                   <Label htmlFor="relevance-threshold">Umbral de relevancia (%)</Label>
                   <Input id="relevance-threshold" type="number" placeholder="70" min="0" max="100" />
                 </div>
-                
-                <div className="space-y-2">
-                  <Label htmlFor="regions">Regiones objetivo</Label>
-                  <Textarea id="regions" placeholder="Madrid, Barcelona, Valencia..." />
-                </div>
-                
+                 
                 <Button className="w-full">
                   <Settings className="h-4 w-4 mr-2" />
                   Guardar Configuración
                 </Button>
-              </CardContent>
-            </Card>
-
-            {/* Estado de las APIs */}
-            <Card className="md:col-span-2">
-              <CardHeader>
-                <CardTitle>Estado de las APIs</CardTitle>
-                <CardDescription>Monitoreo en tiempo real del sistema</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between p-3 border rounded-lg">
-                      <div className="flex items-center space-x-3">
-                        <Database className="h-5 w-5 text-blue-500" />
-                        <div>
-                          <p className="font-medium">API de Scraping</p>
-                          <p className="text-sm text-muted-foreground">Extracción de licitaciones</p>
-                        </div>
-                      </div>
-                      <Badge variant="outline" className="text-green-600 border-green-600">
-                        Activa
-                      </Badge>
-                    </div>
-                    
-                    <div className="flex items-center justify-between p-3 border rounded-lg">
-                      <div className="flex items-center space-x-3">
-                        <Zap className="h-5 w-5 text-orange-500" />
-                        <div>
-                          <p className="font-medium">API de Análisis IA</p>
-                          <p className="text-sm text-muted-foreground">Procesamiento inteligente</p>
-                        </div>
-                      </div>
-                      <Badge variant="outline" className="text-green-600 border-green-600">
-                        Activa
-                      </Badge>
-                    </div>
-                  </div>
-                  
-                  <div className="space-y-3">
-                    <div className="p-3 border rounded-lg">
-                      <h4 className="font-medium mb-2">Estadísticas de rendimiento</h4>
-                      <div className="space-y-2 text-sm">
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Tiempo promedio de scraping:</span>
-                          <span className="font-medium">2.3s</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Tiempo promedio de análisis:</span>
-                          <span className="font-medium">1.8s</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Tasa de éxito:</span>
-                          <span className="font-medium">98.5%</span>
-                        </div>
-                      </div>
-                    </div>
-                    
-                    <div className="p-3 border rounded-lg">
-                      <h4 className="font-medium mb-2">Límites de API</h4>
-                      <div className="space-y-2 text-sm">
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Scraping diario:</span>
-                          <span className="font-medium">{subscription.dailyLimit} / {subscription.dailyLimit}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Análisis restantes:</span>
-                          <span className="font-medium">Ilimitado</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
               </CardContent>
             </Card>
           </div>

@@ -1,19 +1,21 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { signIn, getSession } from "next-auth/react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { toast } from "sonner"
 
-export default function SignInPage() {
+function SignInForm() {
     const [email, setEmail] = useState("")
     const [password, setPassword] = useState("")
     const [isLoading, setIsLoading] = useState(false)
     const router = useRouter()
+    const searchParams = useSearchParams()
+    const callbackUrl = searchParams.get("callbackUrl") || "/"
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
@@ -30,7 +32,7 @@ export default function SignInPage() {
             toast.error("Error al iniciar sesión")
         } else {
             toast.success("Inicio de sesión exitoso")
-            router.push("/")
+            router.push(callbackUrl)
         }
         } catch (error) {
         toast.error("Error al iniciar sesión")
@@ -74,9 +76,9 @@ export default function SignInPage() {
                     required
                 />
                 </div>
-                <Button 
-                type="submit" 
-                className="w-full" 
+                <Button
+                type="submit"
+                className="w-full"
                 disabled={isLoading}
                 >
                 {isLoading ? "Iniciando sesión..." : "Iniciar Sesión"}
@@ -97,4 +99,12 @@ export default function SignInPage() {
         </Card>
         </div>
     )
-    }
+}
+
+export default function SignInPage() {
+    return (
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen">Cargando...</div>}>
+            <SignInForm />
+        </Suspense>
+    )
+}

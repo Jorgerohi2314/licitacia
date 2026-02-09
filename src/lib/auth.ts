@@ -21,6 +21,15 @@ export const authOptions = {
             const user = await db.user.findUnique({
             where: {
                 email: credentials.email
+            },
+            select: {
+                id: true,
+                email: true,
+                name: true,
+                role: true,
+                preferredRegions: true,
+                preferredProvinces: true,
+                preferredCategories: true,
             }
             })
 
@@ -33,10 +42,14 @@ export const authOptions = {
             // const isPasswordValid = await bcrypt.compare(credentials.password, user.password || "")
             
             return {
-            id: user.id,
-            email: user.email,
-            name: user.name,
-            }
+             id: user.id,
+             email: user.email,
+             name: user.name,
+             role: user.role,
+             preferredRegions: user.preferredRegions ? JSON.parse(user.preferredRegions) : [],
+             preferredProvinces: user.preferredProvinces ? JSON.parse(user.preferredProvinces) : [],
+             preferredCategories: user.preferredCategories ? JSON.parse(user.preferredCategories) : [],
+             }
         }
         })
     ],
@@ -51,12 +64,20 @@ export const authOptions = {
         async jwt({ token, user }) {
         if (user) {
             token.sub = user.id
+            token.role = user.role
+            token.preferredRegions = user.preferredRegions
+            token.preferredProvinces = user.preferredProvinces
+            token.preferredCategories = user.preferredCategories
         }
         return token
         },
         async session({ session, token }) {
         if (token) {
             session.user.id = token.sub
+            session.user.role = token.role
+            session.user.preferredRegions = token.preferredRegions
+            session.user.preferredProvinces = token.preferredProvinces
+            session.user.preferredCategories = token.preferredCategories
         }
         return session
         },

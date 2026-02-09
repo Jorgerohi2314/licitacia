@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { z } from 'zod';
-import * as cheerio from 'cheerio';
+import { parseAtomXML, extractPrimaryLink, extractCPVCodes, extractCPVCategory } from '@/lib/parser';
+import { analyzeWithGroqAI, inferLocationWithGroqAI, inferLocationByRules } from '@/lib/tender-analysis';
 import { Prisma } from '@prisma/client';
+import AdmZip from 'adm-zip';
+import fs from 'fs';
+import path from 'path';
+import { glob } from 'glob';
 
 // Tipos para las fuentes de scraping
 interface ScrapingSourceConfig {
@@ -30,48 +35,40 @@ export interface TenderInput {
   summary?: string;
 }
 
-// Configuración inicial para seeding
+// Configuración inicial para seeding - Solo fuentes robustas con ATOM
 const INITIAL_SOURCES = [
   {
-    id: 'boe',
-    name: 'Boletín Oficial del Estado',
-    url: 'https://www.boe.es/',
-    type: 'boe',
-    region: null,
+    id: 'valencia',
+    name: 'Plataforma de Contratación de la Comunidad Valenciana',
+    url: 'https://www.contratacion.gva.es/sindicacion/sindicacion_643/licitacionesPerfilContratante',
+    type: 'regional',
+    region: 'Comunidad Valenciana',
     active: true,
   },
   {
-    id: 'doue',
-    name: 'Diario Oficial de la Unión Europea',
-    url: 'https://ted.europa.eu/',
-    type: 'doue',
-    region: null,
-    active: true,
-  },
-  {
-    id: 'plataforma-contratacion',
-    name: 'Plataforma de Contratación del Sector Público',
-    url: 'https://contrataciondelestado.es/',
+    id: 'contratos-menores',
+    name: 'Contratos Menores Perfiles Contratantes',
+    url: 'https://contrataciondelsectorpublico.gob.es/sindicacion/sindicacion_1143/contratosMenoresPerfilesContratantes.atom',
     type: 'platform',
     region: null,
     active: true,
   },
   {
-    id: 'cat',
-    name: 'Plataforma de Contratación de Cataluña',
-    url: 'https://contractaciopublica.gencat.cat/',
-    type: 'regional',
-    region: 'Cataluña',
+    id: 'licitaciones-completo',
+    name: 'Licitaciones Perfiles Contratante Completo',
+    url: 'https://contrataciondelsectorpublico.gob.es/sindicacion/sindicacion_643/licitacionesPerfilesContratanteCompleto3.atom',
+    type: 'platform',
+    region: null,
     active: true,
   },
   {
-    id: 'madrid',
-    name: 'Plataforma de Contratación de la Comunidad de Madrid',
-    url: 'https://www.madrid.org/contratacionpublica/sindicacion/sindicacion.atom',
-    type: 'regional',
-    region: 'Madrid',
+    id: 'plataformas-agregadas',
+    name: 'Plataformas Agregadas Sin Menores',
+    url: 'https://contrataciondelsectorpublico.gob.es/sindicacion/sindicacion_1044/PlataformasAgregadasSinMenores.atom',
+    type: 'platform',
+    region: null,
     active: true,
-  }
+  },
 ];
 
 // Schema de validación
@@ -87,12 +84,16 @@ async function getScrapingSources() {
 
   if (sources.length === 0) {
     console.log('Seeding initial scraping sources...');
-    await db.scrapingSource.createMany({
-      data: INITIAL_SOURCES.map(s => ({
-        ...s,
-        type: s.type as string, // Cast simple para Prisma
-      }))
-    });
+    for (const sourceData of INITIAL_SOURCES) {
+      await db.scrapingSource.upsert({
+        where: { id: sourceData.id },
+        update: sourceData,
+        create: {
+          ...sourceData,
+          type: sourceData.type as string,
+        },
+      });
+    }
     sources = await db.scrapingSource.findMany();
   }
 
@@ -108,10 +109,8 @@ export async function processAndSaveTenders(tenders: TenderInput[], sourceId: st
   let updatedTendersCount = 0;
 
   try {
-    // 1. Obtener URLs de los tenders encontrados para verificar existencia
     const sourceUrls = tenders.map(t => t.sourceUrl).filter(Boolean);
 
-    // 2. Buscar tenders existentes en una sola consulta
     const existingTenders = await db.tender.findMany({
       where: {
         sourceUrl: { in: sourceUrls }
@@ -121,7 +120,6 @@ export async function processAndSaveTenders(tenders: TenderInput[], sourceId: st
 
     const existingUrlMap = new Map(existingTenders.map(t => [t.sourceUrl, t]));
 
-    // 3. Separar nuevos de existentes
     const tendersToCreate: Prisma.TenderCreateManyInput[] = [];
     const tendersToUpdate: { id: string, data: any }[] = [];
 
@@ -129,7 +127,6 @@ export async function processAndSaveTenders(tenders: TenderInput[], sourceId: st
       const existing = existingUrlMap.get(tender.sourceUrl);
 
       if (existing) {
-        // Solo actualizamos si hay cambios relevantes (simple check por ahora)
         if (existing.summary !== tender.summary) {
           tendersToUpdate.push({
             id: existing.id,
@@ -137,7 +134,6 @@ export async function processAndSaveTenders(tenders: TenderInput[], sourceId: st
               description: tender.description,
               scrapedAt: new Date(),
               summary: tender.summary,
-              // No actualizamos status ni otros campos manuales
             }
           });
         }
@@ -153,28 +149,24 @@ export async function processAndSaveTenders(tenders: TenderInput[], sourceId: st
           sourceUrl: tender.sourceUrl,
           publishedAt: new Date(tender.publishedAt),
           status: 'NEW',
-          relevanceScore: 50, // Default score
+          relevanceScore: 50,
           scrapedAt: new Date(),
           keywords: JSON.stringify(tender.keywords || []),
-          summary: tender.description.substring(0, 200),
+          summary: tender.summary || (tender.description ? tender.description.substring(0, 200) : ''),
           requirements: JSON.stringify([]),
-          complexity: 'MEDIUM',
-          riskLevel: 'MEDIUM'
-    ge
+          complexity: 'MEDIUM' as const,
+          riskLevel: 'MEDIUM' as const
         });
       }
     }
 
-    // 4. Ejecutar inserciones masivas
     if (tendersToCreate.length > 0) {
       await db.tender.createMany({
         data: tendersToCreate,
-        skipDuplicates: true // Seguridad adicional
       });
       newTendersCount = tendersToCreate.length;
     }
 
-    // 5. Ejecutar actualizaciones en paralelo con límite de concurrencia
     const BATCH_SIZE = 10;
     for (let i = 0; i < tendersToUpdate.length; i += BATCH_SIZE) {
       const batch = tendersToUpdate.slice(i, i + BATCH_SIZE);
@@ -202,124 +194,137 @@ export async function processAndSaveTenders(tenders: TenderInput[], sourceId: st
   };
 }
 
-// Función específica para scraping del BOE
-async function scrapeBOE() {
+// Función para analizar una licitación con IA
+async function analyzeTenderWithAI(tenderId: string) {
   try {
-    const boeUrl = 'https://www.boe.es/buscar/boe.php?campo%5B0%5D=ID&dato%5B0%5D=con&type=pdf&accion=Buscar';
-    console.log(`Fetching BOE from: ${boeUrl}`);
-
-    const response = await fetch(boeUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; TenderScraper/1.0)'
-      },
-      signal: AbortSignal.timeout(15000)
+    const tender = await db.tender.findUnique({
+      where: { id: tenderId }
     });
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
+    if (!tender) return null;
 
-    const html = await response.text();
-    const $ = cheerio.load(html);
-    const tenders: TenderInput[] = [];
+    // Análisis principal de la licitación
+    const analysis = await analyzeWithGroqAI(
+      tender.title,
+      tender.description,
+      tender.budget,
+      undefined
+    );
 
-    // Helpers de extracción (reutilizados pero limpiados)
-    const extractKeywords = (title: string): string[] => {
-      const keywords: string[] = [];
-      const titleLower = title.toLowerCase();
-      if (titleLower.match(/tecnolog|software|informática|tic|digital|sistema/i)) keywords.push('tecnología', 'software');
-      if (titleLower.match(/consultor|asesor|asistencia|servicio técnico/i)) keywords.push('consultoría');
-      if (titleLower.match(/construcción|obra|edificación|urbanización|reforma/i)) keywords.push('construcción');
-      if (titleLower.match(/sanidad|salud|hospital|clínica|médico/i)) keywords.push('sanidad');
-      if (titleLower.match(/educación|enseñanza|colegio|universidad|formación/i)) keywords.push('educación');
-      if (titleLower.match(/mantenimiento|reparación|conservación/i)) keywords.push('mantenimiento');
-      return keywords.length > 0 ? keywords : ['licitación', 'contratación', 'administración'];
+    // Inferir ubicación si no está definida
+    let locationData = {
+      region: tender.region,
+      province: tender.province
     };
 
-    const extractOrganization = (title: string): string => {
-      const titleLower = title.toLowerCase();
-      if (titleLower.match(/ministerio|min\./i)) return 'Ministerio';
-      if (titleLower.match(/ayuntamiento|ayto|municipio/i)) return 'Ayuntamiento';
-      if (titleLower.match(/comunidad|autónoma|regional/i)) return 'Comunidad Autónoma';
-      if (titleLower.match(/diputación|provincial/i)) return 'Diputación Provincial';
-      return 'Organismo Público';
-    };
-
-    const extractBudget = (title: string): number | null => {
-      const budgetMatch = title.match(/(\d[\d.,]*)\s*€/i) || title.match(/(\d[\d.,]*)\s*euro/i);
-      if (budgetMatch) {
-        const amount = parseFloat(budgetMatch[1].replace(/\./g, '').replace(',', '.'));
-        return isNaN(amount) ? null : amount;
-      }
-      return null;
-    };
-
-    // Lógica de extracción principal
-    $('a').each((_, element) => {
-      const $el = $(element);
-      const title = $el.text().trim();
-      const href = $el.attr('href');
-
-      if (!title || !href) return;
-
-      const url = new URL(href, boeUrl).toString();
-      const titleLower = title.toLowerCase();
-
-      const isRelevantLink = (
-        (titleLower.match(/licitación|contratación|concurso|adjudicación|contrato|pliego/i) ||
-          url.match(/licitacion|contratacion|concurso|adjudicacion/i)) &&
-        !titleLower.match(/(pdf|boe|pág|página|kb|mb|anuncio|notificación|índice|sumario)/i)
+    if (!tender.region || !tender.province) {
+      console.log(`[Location Inference] Inferring location for tender ${tenderId}...`);
+      
+      // Intentar con IA primero
+      let location = await inferLocationWithGroqAI(
+        tender.title,
+        tender.description,
+        tender.organization
       );
 
-      if (isRelevantLink && title.length > 20) {
-        tenders.push({
-          title: title,
-          organization: extractOrganization(title),
-          budget: extractBudget(title),
-          deadline: new Date(Date.now() + 30 * 86400000).toISOString(),
-          category: 'Administrativo', // Simplificado
-          description: `Licitación pública: ${title}`,
-          source: 'BOE',
-          sourceUrl: url,
-          publishedAt: new Date().toISOString(),
-          keywords: extractKeywords(title)
-        });
+      // Si la IA no pudo determinarlo o confianza es baja, usar reglas
+      if (!location.region || location.confidence === 'LOW') {
+        console.log(`[Location Inference] Falling back to rule-based inference for tender ${tenderId}`);
+        location = inferLocationByRules(
+          tender.title,
+          tender.description,
+          tender.organization
+        );
+      }
+
+      if (location.region) {
+        locationData.region = location.region;
+        locationData.province = location.province;
+        console.log(`[Location Inference] Location inferred for tender ${tenderId}: ${location.region}${location.province ? ` - ${location.province}` : ''} (${location.confidence})`);
+      } else {
+        console.log(`[Location Inference] Could not infer location for tender ${tenderId}: ${location.reasoning}`);
+      }
+    }
+
+    await db.tender.update({
+      where: { id: tenderId },
+      data: {
+        aiCategory: analysis.category,
+        aiSectorTags: JSON.stringify(analysis.sectorTags),
+        aiSummary: analysis.summary,
+        aiKeywords: JSON.stringify(analysis.keywords),
+        aiRecommendations: JSON.stringify(analysis.recommendations),
+        relevanceScore: analysis.relevanceScore,
+        riskLevel: analysis.riskLevel,
+        complexity: analysis.complexity,
+        aiAnalyzedAt: new Date(),
+        status: 'PROCESSED',
+        region: locationData.region,
+        province: locationData.province
       }
     });
 
-    // Fallback search si encontramos pocos
-    if (tenders.length < 5) {
-      $('.resultado-busqueda, .listado-resultados, .item-resultado').each((_, element) => {
-        const $el = $(element);
-        const title = $el.find('h3, .titulo, a').first().text().trim();
-        const href = $el.find('a').attr('href');
+    return { ...analysis, region: locationData.region, province: locationData.province };
+  } catch (error: any) {
+    console.error(`Error analyzing tender ${tenderId}:`, error);
+    return null;
+  }
+}
 
-        if (title && href && title.length > 30) {
-          const url = new URL(href, boeUrl).toString();
-          if (title.toLowerCase().match(/licitación|contratación|concurso/i)) {
-            tenders.push({
-              title: title,
-              organization: extractOrganization(title),
-              budget: extractBudget(title),
-              deadline: new Date(Date.now() + 30 * 86400000).toISOString(),
-              category: 'Administrativo',
-              description: title,
-              source: 'BOE',
-              sourceUrl: url,
-              publishedAt: new Date().toISOString(),
-              keywords: extractKeywords(title)
-            });
-          }
-        }
+// Función para procesar feeds ATOM (Madrid, Valencia, etc.)
+export async function scrapeAtomFeed(sourceId: string, url: string): Promise<any> {
+  try {
+    console.log(`Fetching ATOM feed from: ${url}`);
+
+    const response = await fetch(url, {
+      headers: {
+        'Accept': 'application/xml, application/atom+xml, text/xml',
+        'User-Agent': 'Mozilla/5.0 (compatible; TenderScraper/1.0)'
+      },
+      signal: AbortSignal.timeout(30000)
+    });
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+
+    const xmlText = await response.text();
+    const entries = parseAtomXML(xmlText);
+
+    const tenders: TenderInput[] = entries
+      .filter(entry => entry.title && entry.title.length > 20)
+      .map(entry => {
+        const link = extractPrimaryLink(entry);
+        const cpvCodes = extractCPVCodes(entry);
+        const cpvCategory = cpvCodes.length > 0 
+          ? extractCPVCategory(cpvCodes[0]) 
+          : 'General';
+
+        const extractText = (value: any): string => {
+          if (typeof value === 'string') return value;
+          if (value && typeof value === 'object' && value['#text']) return value['#text'];
+          if (Array.isArray(value) && value[0] && typeof value[0] === 'object' && value[0]['#text']) return value[0]['#text'];
+          return '';
+        };
+
+        return {
+          title: extractText(entry.title) || 'Sin título',
+          organization: extractText(entry.author?.name) || 'Organismo Público',
+          description: extractText(entry.summary) || extractText(entry.content) || extractText(entry.title) || '',
+          summary: extractText(entry.summary) || extractText(entry.content) || '',
+          source: sourceId.toUpperCase(),
+          sourceUrl: link || '',
+          publishedAt: entry.published || new Date().toISOString(),
+          deadline: new Date(Date.now() + 30 * 86400000).toISOString(),
+          category: cpvCategory,
+          keywords: cpvCodes,
+          budget: null
+        };
       });
-    }
 
-    console.log(`Found ${tenders.length} tenders from BOE`);
-
-    const saveResult = await processAndSaveTenders(tenders, 'boe');
+    console.log(`Parsed ${tenders.length} tenders from ATOM feed`);
+    const saveResult = await processAndSaveTenders(tenders, sourceId);
 
     return {
-      sourceId: 'boe',
+      sourceId,
       scrapedAt: new Date().toISOString(),
       totalFound: tenders.length,
       newTenders: saveResult.new,
@@ -327,11 +332,10 @@ async function scrapeBOE() {
       errors: saveResult.errors,
       status: 'completed'
     };
-
   } catch (error: any) {
-    console.error('BOE scraping error:', error);
+    console.error(`ATOM feed scraping error for ${sourceId}:`, error);
     return {
-      sourceId: 'boe',
+      sourceId,
       scrapedAt: new Date().toISOString(),
       totalFound: 0,
       newTenders: 0,
@@ -340,39 +344,6 @@ async function scrapeBOE() {
       status: 'failed'
     };
   }
-}
-
-// Parser XML mejorado usando Cheerio
-function parseAtomFeed(xml: string, sourceId: string): TenderInput[] {
-  const $ = cheerio.load(xml, { xmlMode: true });
-  const items: TenderInput[] = [];
-
-  $('entry').each((_, element) => {
-    const $el = $(element);
-    const title = $el.find('title').text().trim();
-    const summary = $el.find('summary').text().trim() || $el.find('content').text().trim();
-    const updated = $el.find('updated').text().trim() || $el.find('published').text().trim();
-    const link = $el.find('link[rel="alternate"]').attr('href') || $el.find('link').attr('href');
-    const author = $el.find('author name').text().trim();
-
-    if (title) {
-      items.push({
-        title: title || 'Sin título',
-        organization: author || 'Organismo Público',
-        description: summary || title,
-        summary: summary,
-        source: sourceId.toUpperCase(),
-        sourceUrl: link || '',
-        publishedAt: updated || new Date().toISOString(),
-        deadline: new Date(Date.now() + 15 * 86400000).toISOString(), // Default 15 days
-        category: 'General',
-        keywords: [],
-        budget: null // Difícil de extraer genéricamente sin regex específico
-      });
-    }
-  });
-
-  return items;
 }
 
 export async function GET(request: NextRequest) {
@@ -397,6 +368,16 @@ export async function GET(request: NextRequest) {
         )
       };
       return NextResponse.json(status);
+    }
+
+    if (action === 'analyze') {
+      const tenderId = searchParams.get('tenderId');
+      if (!tenderId) {
+        return NextResponse.json({ error: 'tenderId requerido' }, { status: 400 });
+      }
+      
+      const analysis = await analyzeTenderWithAI(tenderId);
+      return NextResponse.json({ success: !!analysis, analysis });
     }
 
     const latest = await db.tender.findMany({
@@ -425,97 +406,150 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Validation failed', details: parseResult.error.issues }, { status: 400 });
     }
 
-    const { action, sourceId, config } = parseResult.data;
-
-    if (action === 'configure') {
-      if (!sourceId) return NextResponse.json({ error: 'sourceId requerido' }, { status: 400 });
-
-      const updated = await db.scrapingSource.update({
-        where: { id: sourceId },
-        data: {
-          ...config,
-          updatedAt: new Date()
-        }
-      });
-      return NextResponse.json(updated);
-    }
+    const { action, sourceId } = parseResult.data;
 
     if (action === 'scrape') {
       if (!sourceId) return NextResponse.json({ error: 'sourceId requerido' }, { status: 400 });
 
-      // BOE tiene lógica especial
-      if (sourceId === 'boe') {
-        const result = await scrapeBOE();
-        // Actualizar estadísticas del source
-        await db.scrapingSource.update({
-          where: { id: 'boe' },
-          data: {
-            lastScraped: new Date(),
-            totalTenders: { increment: result.newTenders }
-          }
-        });
-        return NextResponse.json(result);
-      }
-
-      // Otras fuentes
       const source = await db.scrapingSource.findUnique({ where: { id: sourceId } });
       if (!source) return NextResponse.json({ error: 'Source not found' }, { status: 404 });
 
-      // Fallback endpoints si la URL de la DB no es específica para el feed
-      const fallbackEndpoints: Record<string, string> = {
-        'doue': 'https://ted.europa.eu/TED/misc/atomFeed.do',
-        'plataforma-contratacion': 'https://contrataciondelestado.es/sindicacion/sindicacion_643/licitacionesPerfilContratante',
-        'cat': 'https://contractaciopublica.gencat.cat/ecofin_ps/Atom/ES/indexAtom.xml',
-        'madrid': 'https://www.madrid.org/contratacionpublica/sindicacion/sindicacion.atom'
+      const endpoints: Record<string, string> = {
+        'contratos-menores': 'https://contrataciondelsectorpublico.gob.es/sindicacion/sindicacion_1143/contratosMenoresPerfilesContratantes.atom',
+        'licitaciones-completo': 'https://contrataciondelsectorpublico.gob.es/sindicacion/sindicacion_643/licitacionesPerfilesContratanteCompleto3.atom',
+        'plataformas-agregadas': 'https://contrataciondelsectorpublico.gob.es/sindicacion/sindicacion_1044/PlataformasAgregadasSinMenores.atom',
+        'valencia': 'https://www.contratacion.gva.es/sindicacion/sindicacion_643/licitacionesPerfilContratante',
       };
 
-      // Priorizar la URL de la base de datos, usar fallback si es necesario
-      // Asumimos que si la URL en DB es la genérica de la web, queremos el feed específico si existe
-      const endpoint = fallbackEndpoints[sourceId] || source.url;
-      console.log(`Fetching from endpoint: ${endpoint} (Source: ${source.name})`);
+      const endpoint = endpoints[sourceId] || source.url;
 
-      const res = await fetch(endpoint, {
-        headers: {
-          'Accept': 'application/xml, application/atom+xml, application/json, text/xml',
-          'User-Agent': 'Mozilla/5.0 (compatible; TenderScraper/1.0)'
-        },
-        signal: AbortSignal.timeout(30000)
-      });
-
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-
-      const text = await res.text();
-      // Detectar si es JSON o XML
-      let items: TenderInput[] = [];
-      if (text.trim().startsWith('{') || text.trim().startsWith('[')) {
-        try {
-          const json = JSON.parse(text);
-          items = Array.isArray(json) ? json : (json.items || []);
-        } catch (e) { console.error('JSON parse error', e); }
+      let result;
+      if (endpoints[sourceId]) {
+        result = await scrapeAtomFeed(sourceId, endpoint);
       } else {
-        items = parseAtomFeed(text, sourceId);
+        return NextResponse.json({ error: 'Source not configured for ATOM feed' }, { status: 400 });
       }
 
-      const saveResult = await processAndSaveTenders(items, sourceId);
-
-      // Actualizar estadísticas
       await db.scrapingSource.update({
         where: { id: sourceId },
         data: {
           lastScraped: new Date(),
-          totalTenders: { increment: saveResult.new }
+          totalTenders: { increment: result.newTenders }
         }
       });
 
-      return NextResponse.json({
-        sourceId,
-        scrapedAt: new Date().toISOString(),
-        totalFound: items.length,
-        newTenders: saveResult.new,
-        updatedTenders: saveResult.updated,
-        errors: saveResult.errors,
-        status: 'completed'
+      return NextResponse.json(result);
+    }
+
+    if (action === 'analyze-batch') {
+      const limit = parseInt(json.limit || '5');
+      
+      const unanalyzedTenders = await db.tender.findMany({
+        where: {
+          aiAnalyzedAt: null,
+          status: 'NEW'
+        },
+        take: limit,
+        orderBy: { publishedAt: 'desc' }
       });
+
+      const results: { tenderId: string; success: boolean }[] = [];
+      for (const tender of unanalyzedTenders) {
+        const analysis = await analyzeTenderWithAI(tender.id);
+        if (analysis) {
+          results.push({ tenderId: tender.id, success: true });
+        } else {
+          results.push({ tenderId: tender.id, success: false });
+        }
+      }
+
+      return NextResponse.json({
+        analyzed: results.length,
+        successful: results.filter(r => r.success).length,
+        results
+      });
+    }
+
+    if (action === 'initial-scrape') {
+      const zipUrl = json.zipUrl;
+      if (!zipUrl) return NextResponse.json({ error: 'zipUrl requerido' }, { status: 400 });
+
+      try {
+        console.log(`Downloading ZIP from: ${zipUrl}`);
+
+        const response = await fetch(zipUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; TenderScraper/1.0)'
+          },
+          signal: AbortSignal.timeout(60000)
+        });
+
+        if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+
+        const buffer = await response.arrayBuffer();
+        const zip = new AdmZip(Buffer.from(buffer));
+
+        const tempDir = path.join(process.cwd(), 'temp', Date.now().toString());
+        fs.mkdirSync(tempDir, { recursive: true });
+
+        zip.extractAllTo(tempDir, true);
+
+        const atomFiles = await glob('**/*.atom', { cwd: tempDir });
+
+        let totalProcessed = 0;
+        let totalNew = 0;
+        let totalUpdated = 0;
+
+        for (const file of atomFiles) {
+          const filePath = path.join(tempDir, file);
+          const xmlText = fs.readFileSync(filePath, 'utf8');
+          const entries = parseAtomXML(xmlText);
+
+          const tenders: TenderInput[] = entries
+            .filter(entry => entry.title && entry.title.length > 20)
+            .map(entry => {
+              const link = extractPrimaryLink(entry);
+              const cpvCodes = extractCPVCodes(entry);
+              const cpvCategory = cpvCodes.length > 0
+                ? extractCPVCategory(cpvCodes[0])
+                : 'General';
+
+              return {
+                title: entry.title,
+                organization: entry.author?.name || 'Organismo Público',
+                description: entry.summary || entry.title,
+                summary: entry.summary,
+                source: 'INITIAL',
+                sourceUrl: link || '',
+                publishedAt: entry.published || new Date().toISOString(),
+                deadline: new Date(Date.now() + 30 * 86400000).toISOString(),
+                category: cpvCategory,
+                keywords: cpvCodes,
+                budget: null
+              };
+            });
+
+          const saveResult = await processAndSaveTenders(tenders, 'initial');
+          totalProcessed += tenders.length;
+          totalNew += saveResult.new;
+          totalUpdated += saveResult.updated;
+        }
+
+        // Cleanup temp dir
+        fs.rmSync(tempDir, { recursive: true });
+
+        return NextResponse.json({
+          zipUrl,
+          atomFiles: atomFiles.length,
+          totalProcessed,
+          totalNew,
+          totalUpdated,
+          status: 'completed'
+        });
+      } catch (error: any) {
+        console.error('Initial scrape error:', error);
+        return NextResponse.json({ error: 'Initial scrape failed', details: error.message }, { status: 500 });
+      }
     }
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });

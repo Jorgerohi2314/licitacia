@@ -20,31 +20,11 @@ export default function Home() {
   }
 
   if (session) {
-    return (
-      <Shell>
-        <div className="grid auto-rows-min gap-4 md:grid-cols-3">
-          <Card className="glass-card">
-            <CardHeader>
-              <CardTitle>Perfil</CardTitle>
-              <CardDescription>Tu información</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <UserInfo />
-            </CardContent>
-          </Card>
-          <Card className="glass-card md:col-span-2">
-            <CardHeader>
-              <CardTitle>Panel Principal</CardTitle>
-              <CardDescription>Resumen de actividad</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ProtectedContent />
-            </CardContent>
-          </Card>
-        </div>
-        <div className="min-h-[100vh] flex-1 rounded-xl bg-muted/50 md:min-h-min" />
-      </Shell>
-    )
+    // Redirect to dashboard page
+    if (typeof window !== 'undefined') {
+      window.location.href = '/dashboard';
+    }
+    return null;
   }
 
   return (
@@ -60,6 +40,9 @@ export default function Home() {
           </div>
           <div className="flex items-center space-x-4">
             <ThemeToggle />
+            <Button variant="ghost" onClick={() => (window.location.href = "/dashboard")}>
+              Buscar Licitaciones
+            </Button>
             <Button variant="ghost" onClick={() => (window.location.href = "/auth/signin")}>
               Iniciar Sesión
             </Button>

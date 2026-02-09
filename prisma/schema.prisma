@@ -16,6 +16,7 @@ model User {
   email         String    @unique
   emailVerified DateTime?
   image         String?
+  role          Role      @default(USER)
   accounts      Account[]
   sessions      Session[]
   subscriptions Subscription[]
@@ -23,6 +24,19 @@ model User {
   searchHistory SearchHistory[]
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+
+  // User preferences - multivalued or null
+  preferredRegions    String?  // JSON array of regions (comunidades autónomas)
+  preferredProvinces  String?  // JSON array of provinces
+  preferredCategories String?  // JSON array of categories/sectors of interest
+  
+  // Legacy fields (keep for backward compatibility)
+  profileSectors    String?  // JSON array of sectors
+  profileMinBudget   Float?
+  profileMaxBudget   Float?
+  profileRegions     String?  // JSON array of regions
+  profileCompanySize String?  // 'micro' | 'small' | 'medium'
+  profileKeywords    String?  // JSON array of keywords
 }
 
 model Account {
@@ -93,6 +107,16 @@ model Tender {
   relevanceScore Int @default(0)
   complexity  Complexity @default(MEDIUM)
   riskLevel   RiskLevel @default(MEDIUM)
+  region      String?   // Autonomous community  
+  province     String?   // Province
+  
+  // AI Analysis fields
+  aiCategory    String?
+  aiSectorTags  String?  // JSON array of sector tags
+  aiSummary     String?
+  aiKeywords    String?  // JSON array
+  aiRecommendations String? // JSON array
+  aiAnalyzedAt  DateTime?
 
   analysis     TenderAnalysis[]
   notifications Notification[]
@@ -285,5 +309,10 @@ enum LogLevel {
   WARN
   ERROR
   FATAL
+}
+
+enum Role {
+  USER
+  ADMIN
 }
 

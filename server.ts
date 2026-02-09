@@ -1,8 +1,8 @@
 // server.ts - Next.js Standalone + Socket.IO
-import { setupSocket } from '@/lib/socket';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import next from 'next';
+import * as cron from 'node-cron';
 
 const dev = process.env.NODE_ENV !== 'production';
 const currentPort = 3000;
@@ -40,12 +40,18 @@ async function createCustomServer() {
       }
     });
 
-    setupSocket(io);
+    // setupSocket(io);
 
     // Start the server
     server.listen(currentPort, hostname, () => {
       console.log(`> Ready on http://${hostname}:${currentPort}`);
       console.log(`> Socket.IO server running at ws://${hostname}:${currentPort}/api/socketio`);
+    });
+
+    // Schedule daily scrape at 2 AM
+    cron.schedule('0 2 * * *', () => {
+      console.log('Running scheduled daily scrape...');
+      // runDailyScrape().catch(console.error);
     });
 
   } catch (err) {

@@ -8,35 +8,61 @@ export async function GET(request: NextRequest) {
     const keywords = keywordsParam ? keywordsParam.split(',').map(k => k.trim()).filter(Boolean) : [];
     const category = searchParams.get('category') || undefined;
     const minBudget = searchParams.get('minBudget');
+    const minRelevance = searchParams.get('minRelevance');
+    const aiCategory = searchParams.get('aiCategory');
+    const region = searchParams.get('region') || undefined;
+    const province = searchParams.get('province') || undefined;
     const q = searchParams.get('q') || undefined;
-    const limit = Math.min(parseInt(searchParams.get('limit') || '20', 10), 100);
+    const limit = Math.min(parseInt(searchParams.get('limit') || '1000', 10), 1000);
 
     const where: any = {};
 
     if (category) {
-      where.category = { contains: category }; // Modificado
+      where.category = { contains: category };
     }
+    
+    if (aiCategory) {
+      where.aiCategory = aiCategory;
+    }
+    
+    if (region) {
+      where.region = region;
+    }
+    
+    if (province) {
+      where.province = province;
+    }
+    
     if (minBudget) {
       const budgetNum = Number(minBudget);
       if (!Number.isNaN(budgetNum)) {
         where.budget = { gte: budgetNum };
       }
     }
+    
+    if (minRelevance) {
+      const relevanceNum = Number(minRelevance);
+      if (!Number.isNaN(relevanceNum)) {
+        where.relevanceScore = { gte: relevanceNum };
+      }
+    }
 
     const orClauses: any[] = [];
     if (q) {
       orClauses.push(
-        { title: { contains: q } }, // Removido mode
+        { title: { contains: q } },
         { summary: { contains: q } },
-        { description: { contains: q } }
+        { description: { contains: q } },
+        { aiSummary: { contains: q } }
       );
     }
     if (keywords.length > 0) {
       for (const kw of keywords) {
         orClauses.push(
           { keywords: { contains: kw } },
-          { title: { contains: kw } }, // Removido mode
-          { summary: { contains: kw } } // Removido mode
+          { title: { contains: kw } },
+          { summary: { contains: kw } },
+          { aiKeywords: { contains: kw } }
         );
       }
     }
@@ -50,7 +76,6 @@ export async function GET(request: NextRequest) {
       take: limit,
     });
 
-    // Adaptar formato de salida: parsear keywords/requirements JSON strings
     const normalized = tenders.map(t => ({
       id: t.id,
       title: t.title,
@@ -65,25 +90,26 @@ export async function GET(request: NextRequest) {
       source: t.source,
       sourceUrl: t.sourceUrl ?? null,
       publishedAt: t.publishedAt.toISOString(),
+      // AI Analysis fields
+      aiCategory: t.aiCategory,
+      aiSectorTags: safeParseArray(t.aiSectorTags),
+      aiSummary: t.aiSummary,
+      aiKeywords: safeParseArray(t.aiKeywords),
+      aiRecommendations: safeParseArray(t.aiRecommendations),
+      aiAnalyzedAt: t.aiAnalyzedAt?.toISOString(),
+      riskLevel: t.riskLevel?.toLowerCase(),
+      complexity: t.complexity?.toLowerCase(),
+      region: t.region,
+      province: t.province
     }));
 
     return NextResponse.json(normalized);
   } catch (error) {
     console.error('Error fetching tenders:', error);
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Error interno del servidor' },
       { status: 500 }
     );
-  }
-}
-
-function safeParseArray(value: string | null | undefined): string[] {
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
   }
 }
 
@@ -116,8 +142,18 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Error processing tender:', error);
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Error interno del servidor' },
       { status: 500 }
     );
+  }
+}
+
+function safeParseArray(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
 }
