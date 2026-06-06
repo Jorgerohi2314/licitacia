@@ -113,18 +113,6 @@ src/
 └── services/             # External service integrations
 ```
 
-## 📸 Screenshots
-
-*(Recommend adding 2-3 screenshots of your dashboard, tender analysis view, and dark mode interface here to make the repository visually appealing to recruiters.)*
-
-<details>
-<summary>Click to view placeholders</summary>
-<br>
-<!-- Add your image tags here like: <img src="./public/screenshots/dashboard.png" width="800" alt="Dashboard"> -->
-> 🖼️ *Dashboard View*
-<br>
-> 🖼️ *Tender Detail & AI Summary*
-</details>
 
 ## 💡 Future Roadmap
 
@@ -135,11 +123,8 @@ src/
 
 ## 🤝 Contributing
 
-Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/yourusername/licitacia/issues).
+Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/Jorgerohi2314/licitacia/issues).
 
-## 📝 License
-
-This project is [MIT](https://choosealicense.com/licenses/mit/) licensed.
 
 ---
 *Crafted with precision for optimal public procurement tracking.*
