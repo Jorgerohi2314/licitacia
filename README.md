@@ -1,309 +1,145 @@
-# Sistema de Alertas Premium para Licitaciones Públicas
+<div align="center">
+  <h1>🏛️ LicitacIA</h1>
+  <p><strong>AI-Powered Public Procurement & Tender Alert System</strong></p>
 
-Un sistema completo de monitorización y alertas de oportunidades de negocio en contrataciones públicas, basado en el análisis de plantillas n8n y implementado con Next.js 15.
+  [![Next.js](https://img.shields.io/badge/Next.js-15-black?style=flat-square&logo=next.js)](https://nextjs.org/)
+  [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
+  [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4-38B2AC?style=flat-square&logo=tailwind-css)](https://tailwindcss.com/)
+  [![Prisma](https://img.shields.io/badge/Prisma-6.0-2D3748?style=flat-square&logo=prisma)](https://www.prisma.io/)
+  [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
+</div>
 
-## 🚀 Características
+<br />
 
-### Core Features
-- **Extracción Automatizada**: Scraping de fuentes oficiales (BOE, DOUE, plataformas autonómicas)
-- **Clasificación con IA**: Análisis inteligente de licitaciones usando OpenAI/ZAI
-- **Alertas Multi-canal**: Notificaciones por email, Telegram y WhatsApp
-- **Sistema de Suscripciones**: Planes gratuito, premium y empresarial
-- **Dashboard en Tiempo Real**: Métricas y reportes detallados
-- **Pasarelas de Pago**: Integración con Stripe y PayPal
+## 📖 Overview
 
-### Technical Features
-- **Arquitectura Serverless**: Construido con Next.js 15 y App Router
-- **Base de Datos**: Prisma ORM con SQLite
-- **APIs RESTful**: Endpoints completos para todas las funcionalidades
-- **Manejo de Errores**: Sistema robusto de logging y monitoreo
-- **UI/UX Moderna**: Interfaz construida con shadcn/ui y Tailwind CSS
+**LicitacIA** is a comprehensive, automated platform designed to monitor, aggregate, and analyze public procurement opportunities (tenders) from official government sources (such as BOE, DOUE, and regional platforms). 
 
-## 📋 Arquitectura del Sistema
+Built with modern web technologies, it leverages Artificial Intelligence to classify, summarize, and match complex tender documents with user profiles, sending real-time, multi-channel alerts (Email, Telegram, WhatsApp) based on customized subscription plans.
 
-### Frontend (Next.js)
-```
+This project was inspired by advanced workflow automation patterns (like n8n templates) but rebuilt from the ground up as a scalable, serverless full-stack application using **Next.js 15**.
+
+## ✨ Key Features
+
+- 🤖 **AI-Driven Analysis**: Integrates with OpenAI/Z-AI to intelligently parse, summarize, and tag complex legal tender documents, matching them against user keywords and sectors.
+- 🕷️ **Automated Data Extraction**: Custom scrapers and XML/ZIP parsers to continuously ingest data from official government procurement portals.
+- 🔔 **Multi-Channel Alert System**: Instant notifications delivered via Email, Telegram, and WhatsApp, customized by user preferences.
+- 💳 **SaaS Subscription Model**: Built-in tiered access (Free, Premium, Enterprise) with payment gateway integration (Stripe/PayPal).
+- 📊 **Real-Time Dashboard**: Interactive UI providing detailed metrics, advanced filtering, and tracking of relevant tenders.
+- ⚡ **Modern Architecture**: Fully typed Next.js App Router backend/frontend with server actions, protected routes, and a Prisma ORM database layer.
+
+## 🛠️ Technology Stack
+
+### Frontend
+- **Framework**: [Next.js 15](https://nextjs.org/) (React 19)
+- **Styling**: [Tailwind CSS](https://tailwindcss.com/) & [shadcn/ui](https://ui.shadcn.com/)
+- **State Management**: [Zustand](https://zustand-demo.pmnd.rs/) & [React Query](https://tanstack.com/query/latest)
+- **Components**: Framer Motion (Animations), Recharts (Data Visualization)
+
+### Backend
+- **Architecture**: Next.js API Routes (Serverless)
+- **Database**: SQLite (Development) / PostgreSQL (Production ready) via **[Prisma ORM](https://www.prisma.io/)**
+- **Authentication**: [NextAuth.js](https://next-auth.js.org/) (Role-based access control)
+- **Real-time**: Socket.io
+
+### AI & Integrations
+- **AI Models**: OpenAI API, Groq SDK, Z-AI
+- **Payments**: Stripe / PayPal (via API endpoints)
+- **Scraping**: Cheerio, Fast-XML-Parser, Adm-Zip
+
+## 🚀 Getting Started
+
+### Prerequisites
+- **Node.js**: v18.x or higher
+- **npm** or **yarn**
+- **API Keys**: OpenAI (for AI analysis), Telegram Bot Token (for alerts), Stripe (for payments)
+
+### Installation
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/yourusername/licitacia.git
+   cd licitacia
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+3. **Environment Setup:**
+   Create a `.env` file in the root directory and configure your keys:
+   ```env
+   # Database
+   DATABASE_URL="file:./prisma/dev.db"
+
+   # Authentication
+   NEXTAUTH_URL="http://localhost:3000"
+   NEXTAUTH_SECRET="your-super-secret-key"
+
+   # AI APIs
+   OPENAI_API_KEY="sk-..."
+   ZAI_API_KEY="..."
+
+   # External Services (Optional for dev)
+   STRIPE_SECRET_KEY="sk_test_..."
+   TELEGRAM_BOT_TOKEN="..."
+   ```
+
+4. **Initialize the Database:**
+   ```bash
+   npm run db:push
+   npm run db:generate
+   ```
+
+5. **Run the Development Server:**
+   ```bash
+   npm run dev
+   ```
+   *The application will be available at [http://localhost:3000](http://localhost:3000).*
+
+## 📂 Project Structure
+
+```text
 src/
-├── app/
-│   ├── page.tsx                 # Dashboard principal
-│   ├── api/                     # Rutas API
-│   │   ├── metrics/             # Métricas del sistema
-│   │   ├── tenders/             # Gestión de licitaciones
-│   │   ├── analyze/             # Análisis con IA
-│   │   ├── subscription/        # Gestión de suscripciones
-│   │   ├── scrape/              # Scraping de fuentes
-│   │   ├── notifications/       # Sistema de notificaciones
-│   │   ├── payments/            # Pasarelas de pago
-│   │   └── logs/                # Logging y errores
-│   └── lib/
-│       └── db.ts                # Cliente Prisma
-├── components/
-│   ├── ui/                      # Componentes shadcn/ui
-│   └── dashboard.tsx            # Componente principal
-└── lib/
-    └── utils.ts                 # Utilidades
+├── app/                  # Next.js App Router (Pages & API Endpoints)
+│   ├── api/              # Serverless API routes (auth, cron, scrape, webhooks)
+│   ├── dashboard/        # Protected user dashboard
+│   └── admin/            # Admin control panel
+├── components/           # Reusable UI components (shadcn/ui, layouts)
+├── hooks/                # Custom React hooks
+├── lib/                  # Core logic, DB clients, utility functions, scrapers
+├── scripts/              # Standalone utility scripts (cron jobs, db seeding)
+└── services/             # External service integrations
 ```
 
-### Backend (API Routes)
-- **`/api/metrics`**: Métricas del dashboard y estadísticas
-- **`/api/tenders`**: CRUD de licitaciones y filtrado
-- **`/api/analyze`**: Análisis de licitaciones con IA
-- **`/api/subscription`**: Gestión de suscripciones de usuarios
-- **`/api/scrape`**: Scraping de fuentes oficiales
-- **`/api/notifications`**: Envío de notificaciones multi-canal
-- **`/api/payments`**: Procesamiento de pagos (Stripe/PayPal)
-- **`/api/logs`**: Sistema de logging y monitoreo
+## 📸 Screenshots
 
-### Base de Datos (Prisma + SQLite)
-- **Users**: Gestión de usuarios
-- **Subscriptions**: Planes y límites
-- **Tenders**: Licitaciones y análisis
-- **Notifications**: Historial de notificaciones
-- **PaymentHistory**: Transacciones de pago
-- **ScrapingSources**: Configuración de fuentes
-- **ErrorLogs**: Registro de errores
+*(Recommend adding 2-3 screenshots of your dashboard, tender analysis view, and dark mode interface here to make the repository visually appealing to recruiters.)*
 
-## 🛠️ Instalación y Configuración
+<details>
+<summary>Click to view placeholders</summary>
+<br>
+<!-- Add your image tags here like: <img src="./public/screenshots/dashboard.png" width="800" alt="Dashboard"> -->
+> 🖼️ *Dashboard View*
+<br>
+> 🖼️ *Tender Detail & AI Summary*
+</details>
 
-### Prerrequisitos
-- Node.js 18+
-- npm o yarn
-- Cuenta de OpenAI para la API de IA
-- Cuentas de Stripe y PayPal para pagos (opcional)
+## 💡 Future Roadmap
 
-### Instalación
-```bash
-# Clonar el repositorio
-git clone <repository-url>
-cd public-tenders-alerts
+- [ ] Migration of local SQLite DB to PostgreSQL for production deployment.
+- [ ] Integration of CI/CD pipelines (GitHub Actions) for automated testing and deployment.
+- [ ] Full coverage of unit and end-to-end testing (Jest / Playwright).
+- [ ] Expanding scraping sources to international platforms (TED - Tenders Electronic Daily).
 
-# Instalar dependencias
-npm install
+## 🤝 Contributing
 
-# Configurar variables de entorno
-cp .env.example .env.local
-# Editar .env.local con tus credenciales
+Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/yourusername/licitacia/issues).
 
-# Inicializar base de datos
-npx prisma generate
-npx prisma db push
+## 📝 License
 
-# Iniciar servidor de desarrollo
-npm run dev
-```
-
-### Configuración de Servicios
-
-#### OpenAI/ZAI
-```bash
-# Obtener API key de OpenAI
-# https://platform.openai.com/api-keys
-OPENAI_API_KEY="sk-your-key"
-
-# Configurar ZAI (si está disponible)
-ZAI_API_KEY="your-z-ai-key"
-```
-
-#### Stripe
-```bash
-# Configurar claves de Stripe
-# https://dashboard.stripe.com/apikeys
-STRIPE_SECRET_KEY="sk_test_your-secret-key"
-STRIPE_PUBLISHABLE_KEY="pk_test_your-publishable-key"
-```
-
-#### Telegram Bot
-```bash
-# Crear bot con @BotFather
-TELEGRAM_BOT_TOKEN="your-bot-token"
-```
-
-## 📊 Uso del Sistema
-
-### 1. Dashboard Principal
-Accede a `http://localhost:3000` para ver el dashboard con:
-- Métricas en tiempo real
-- Licitaciones recientes
-- Gestión de suscripciones
-- Configuración de alertas
-
-### 2. Gestión de Suscripciones
-- **Plan Gratuito**: 5 alertas diarias, solo email
-- **Plan Premium**: 50 alertas diarias, todos los canales
-- **Plan Empresarial**: Alertas ilimitadas, API dedicada
-
-### 3. Configuración de Alertas
-- Añade palabras clave personalizadas
-- Selecciona categorías de interés
-- Configura canales de notificación
-- Establece filtros de presupuesto
-
-### 4. Monitoreo y Logs
-- Accede a `/api/logs?action=list` para ver logs
-- Usa `/api/logs?action=stats` para estadísticas
-- Exporta logs en JSON o CSV
-
-## 🔧 Endpoints API
-
-### Métricas
-```http
-GET /api/metrics
-```
-
-### Licitaciones
-```http
-GET /api/tenders?keywords=tecnologia,software&limit=10
-POST /api/tenders
-```
-
-### Análisis con IA
-```http
-POST /api/analyze
-Content-Type: application/json
-
-{
-  "tender": {
-    "title": "Desarrollo de software",
-    "description": "Se necesita desarrollo...",
-    "budget": 50000
-  },
-  "userKeywords": ["tecnología", "software"]
-}
-```
-
-### Suscripciones
-```http
-GET /api/subscription?email=user@example.com
-POST /api/subscription
-PUT /api/subscription
-DELETE /api/subscription?email=user@example.com
-```
-
-### Notificaciones
-```http
-GET /api/notifications?subscriptionId=123&limit=20
-POST /api/notifications
-PUT /api/notifications  # Envío masivo
-```
-
-### Pagos
-```http
-GET /api/payments?action=pricing
-POST /api/payments
-PUT /api/payments  # Confirmar pago
-```
-
-## 🏗️ Arquitectura de n8n Inspirada
-
-El sistema está inspirado en las plantillas de n8n analizadas:
-
-### Patrones Implementados
-- **Web Scraping**: Similar a "Scrape and summarize webpages with AI"
-- **AI Analysis**: Basado en plantillas de clasificación con OpenAI
-- **Email Notifications**: Inspirado en "Email Summary Agent"
-- **Telegram Integration**: Similar a "Telegram AI Chatbot"
-- **Subscription Management**: Basado en "Email Subscription Service"
-
-### Mejoras sobre n8n
-- **Escalabilidad**: Arquitectura serverless auto-escalable
-- **Persistencia**: Base de datos estructurada con Prisma
-- **UI Completa**: Dashboard moderno y responsive
-- **API RESTful**: Integración fácil con otros sistemas
-- **Coste-efectivo**: Sin costes por nodo o ejecución
-
-## 📈 Métricas y Monitoreo
-
-### KPIs Principales
-- **Total de Licitaciones**: Número total de oportunidades detectadas
-- **Licitaciones Relevantes**: Oportunidades que coinciden con criterios
-- **Alertas Enviadas**: Notificaciones entregadas exitosamente
-- **Tasa de Conversión**: Usuarios que se convierten a premium
-- **Engagement**: Uso activo del sistema
-
-### Monitoreo
-- **Logs en Tiempo Real**: Registro detallado de todas las operaciones
-- **Error Tracking**: Detección y notificación de errores
-- **Performance Monitoring**: Tiempos de respuesta y uso de recursos
-- **Business Analytics**: Métricas de negocio y crecimiento
-
-## 🔒 Seguridad
-
-### Medidas Implementadas
-- **Validación de Input**: Sanitización de todos los datos de entrada
-- **Rate Limiting**: Límites de peticiones por usuario
-- **Authentication**: Sistema de autenticación de usuarios
-- **Authorization**: Control de acceso basado en roles
-- **Data Encryption**: Cifrado de datos sensibles
-- **Secure Headers**: Headers de seguridad HTTP
-
-### Mejoras de Seguridad Planeadas
-- [ ] Implementar JWT para autenticación
-- [ ] Añadir CAPTCHA para formularios públicos
-- [ ] Implementar políticas de CORS restrictivas
-- [ ] Añadir auditoría de seguridad
-
-## 🚀 Despliegue
-
-### Desarrollo
-```bash
-npm run dev
-# Acceder a http://localhost:3000
-```
-
-### Producción
-```bash
-# Build de la aplicación
-npm run build
-
-# Iniciar servidor de producción
-npm start
-
-# Verificar código
-npm run lint
-```
-
-### Docker
-```dockerfile
-FROM node:18-alpine
-
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-
-COPY . .
-RUN npm run build
-
-EXPOSE 3000
-CMD ["npm", "start"]
-```
-
-## 🤝 Contribuciones
-
-1. Fork del repositorio
-2. Crear rama de feature (`git checkout -b feature/amazing-feature`)
-3. Commit de cambios (`git commit -m 'Add amazing feature'`)
-4. Push a la rama (`git push origin feature/amazing-feature`)
-5. Abrir Pull Request
-
-## 📄 Licencia
-
-Este proyecto está licenciado bajo la MIT License - ver el archivo [LICENSE](LICENSE) para detalles.
-
-## 🙏 Agradecimientos
-
-- **n8n**: Por la inspiración en las plantillas de automatización
-- **OpenAI**: Por la API de inteligencia artificial
-- **Stripe & PayPal**: Por las soluciones de pago
-- **Vercel**: Por la plataforma de despliegue
-
-## 📞 Soporte
-
-Para soporte técnico:
-- Abrir un issue en GitHub
-- Email: support@public-tenders-alerts.com
-- Documentación: [Wiki del Proyecto](wiki-url)
+This project is [MIT](https://choosealicense.com/licenses/mit/) licensed.
 
 ---
-
-**Construido con ❤️ utilizando Next.js 15 y inspirado en las mejores prácticas de automatización de n8n**# licitacia
-# licitacia
+*Crafted with precision for optimal public procurement tracking.*
